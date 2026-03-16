@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WM V1</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    body { margin:0; background:#f5f7fb; }
+    .top { background:#0f172a; color:#fff; padding:12px 16px; font-weight:600; }
+    .main { padding:14px; }
+    .hint { color:#6b7280; font-size:12px; margin:6px 0; }
+    .excel .el-input__wrapper,.excel .el-select .el-input__wrapper{ box-shadow:none; border:1px solid #d1d5db; }
+    .dev { padding:32px; text-align:center; color:#6b7280; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+  <script>
+    const { createApp, reactive, ref, computed } = Vue;
+    const { createRouter, createWebHashHistory } = VueRouter;
+    const API = 'http://127.0.0.1:8000';
+
+    async function request(url, options={}) {
+      const res = await fetch(API + url, { headers:{'Content-Type':'application/json'}, ...options });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || '请求失败');
+      return data.data;
+    }
+
+    const BaseData = {
+      setup() {
+        const products = ref([]), customers = ref([]), suppliers = ref([]);
+        const p = reactive({ product_code:'', name:'', spec:'', unit:'PCS', hs_code:'', customs_name:'', material:'', origin_country:'CN', qty_per_carton:0, carton_length:0, carton_width:0, carton_height:0, net_weight:0, gross_weight:0, safety_stock:0 });
+        const c = reactive({ code:'', name:'', country:'', currency:'USD', trade_term:'', default_port:'', payment_term:'', contact:'', phone:'', email:'', note:'' });
+        const s = reactive({ code:'', name:'', country:'', currency:'USD', payment_term:'', tax_scheme:'', contact:'', phone:'', email:'', note:'' });
+
+        const load = async () => {
+          products.value = await request('/api/products');
+          customers.value = await request('/api/customers');
+          suppliers.value = await request('/api/suppliers');
+        };
+        const saveP = async () => { await request('/api/products',{method:'POST',body:JSON.stringify(p)}); await load(); };
+        const saveC = async () => { await request('/api/customers',{method:'POST',body:JSON.stringify(c)}); await load(); };
+        const saveS = async () => { await request('/api/suppliers',{method:'POST',body:JSON.stringify(s)}); await load(); };
+
+        load();
+        return { p,c,s,products,customers,suppliers,saveP,saveC,saveS };
+      },
+      template:`
+      <el-card>
+        <h3>基础资料 /base-data</h3>
+        <div class="hint">Excel风格：表头+表体（单行录入后保存）</div>
+        <el-divider content-position="left">商品表体</el-divider>
+        <el-table :data="[p]" border class="excel"><el-table-column label="编码"><template #default><el-input v-model="p.product_code"/></template></el-table-column><el-table-column label="名称"><template #default><el-input v-model="p.name"/></template></el-table-column><el-table-column label="规格"><template #default><el-input v-model="p.spec"/></template></el-table-column><el-table-column label="单位"><template #default><el-input v-model="p.unit"/></template></el-table-column><el-table-column label="HS"><template #default><el-input v-model="p.hs_code"/></template></el-table-column><el-table-column label="安全库存"><template #default><el-input-number v-model="p.safety_stock" :min="0"/></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="saveP">保存</el-button></template></el-table-column></el-table>
+        <el-table :data="products" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="product_code" label="编码"/><el-table-column prop="name" label="名称"/><el-table-column prop="spec" label="规格"/><el-table-column prop="unit" label="单位" width="80"/></el-table>
+
+        <el-divider content-position="left">客户表体</el-divider>
+        <el-table :data="[c]" border class="excel"><el-table-column label="编码"><template #default><el-input v-model="c.code"/></template></el-table-column><el-table-column label="名称"><template #default><el-input v-model="c.name"/></template></el-table-column><el-table-column label="国家"><template #default><el-input v-model="c.country"/></template></el-table-column><el-table-column label="币种"><template #default><el-input v-model="c.currency"/></template></el-table-column><el-table-column label="条款"><template #default><el-input v-model="c.trade_term"/></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="saveC">保存</el-button></template></el-table-column></el-table>
+        <el-table :data="customers" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="code" label="编码"/><el-table-column prop="name" label="名称"/></el-table>
+
+        <el-divider content-position="left">供应商表体</el-divider>
+        <el-table :data="[s]" border class="excel"><el-table-column label="编码"><template #default><el-input v-model="s.code"/></template></el-table-column><el-table-column label="名称"><template #default><el-input v-model="s.name"/></template></el-table-column><el-table-column label="国家"><template #default><el-input v-model="s.country"/></template></el-table-column><el-table-column label="币种"><template #default><el-input v-model="s.currency"/></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="saveS">保存</el-button></template></el-table-column></el-table>
+        <el-table :data="suppliers" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="code" label="编码"/><el-table-column prop="name" label="名称"/></el-table>
+      </el-card>`
+    };
+
+    const Purchase = {
+      setup() {
+        const suppliers = ref([]), products = ref([]), docs = ref([]);
+        const head = reactive({ purchase_no:'PO-'+Date.now(), supplier_id:null, currency:'USD', eta:'', port:'', payment_term:'', transport_mode:'SEA', status:'CONFIRMED', note:'' });
+        const lines = reactive([{ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_count:0, line_note:'' }]);
+        const loadRef = async()=>{ suppliers.value = await request('/api/suppliers'); products.value = await request('/api/products'); docs.value = await request('/api/purchases'); };
+        const addLine=()=>lines.push({ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_count:0, line_note:''});
+        const delLine=(i)=>{ if(lines.length>1) lines.splice(i,1); };
+        const onProduct=(row)=>{ const p = products.value.find(x=>x.id===row.product_id); if(!p) return; row.spec_snapshot=p.spec; row.unit=p.unit; };
+        const save=async()=>{ await request('/api/purchases',{method:'POST',body:JSON.stringify({ ...head, items: lines })}); await loadRef(); };
+        loadRef();
+        return { suppliers, products, docs, head, lines, addLine, delLine, onProduct, save };
+      },
+      template:`<el-card><h3>采购入库 /purchase</h3><el-descriptions :column="4" border><el-descriptions-item label="采购单号">{{head.purchase_no}}</el-descriptions-item><el-descriptions-item label="供应商"><el-select v-model="head.supplier_id" style="width:160px"><el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id"/></el-select></el-descriptions-item><el-descriptions-item label="币种"><el-input v-model="head.currency"/></el-descriptions-item><el-descriptions-item label="ETA"><el-input v-model="head.eta"/></el-descriptions-item></el-descriptions><div class="toolbar" style="margin-top:8px"><el-button type="primary" @click="addLine">新增行</el-button><el-button type="success" @click="save">保存(入库)</el-button></div><el-table :data="lines" border class="excel"><el-table-column type="index" width="50" label="#"/><el-table-column label="商品"><template #default="s"><el-select v-model="s.row.product_id" @change="onProduct(s.row)" style="width:100%"><el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id"/></el-select></template></el-table-column><el-table-column label="规格"><template #default="s"><el-input v-model="s.row.spec_snapshot"/></template></el-table-column><el-table-column label="单位"><template #default="s"><el-input v-model="s.row.unit"/></template></el-table-column><el-table-column label="数量"><template #default="s"><el-input-number v-model="s.row.quantity" :min="0.01"/></template></el-table-column><el-table-column label="单价"><template #default="s"><el-input-number v-model="s.row.unit_price" :min="0"/></template></el-table-column><el-table-column label="箱数"><template #default="s"><el-input-number v-model="s.row.carton_count" :min="0"/></template></el-table-column><el-table-column label="操作" width="80"><template #default="s"><el-button type="danger" plain @click="delLine(s.$index)">删</el-button></template></el-table-column></el-table><el-table :data="docs" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="purchase_no" label="采购单号"/><el-table-column prop="supplier_name" label="供应商"/></el-table></el-card>`
+    };
+
+    const Sales = {
+      setup() {
+        const customers = ref([]), products = ref([]), docs = ref([]), inv = ref([]);
+        const head = reactive({ sales_no:'SO-'+Date.now(), customer_id:null, currency:'USD', port:'', etd:'', payment_term:'', transport_mode:'SEA', shipping_mark:'', status:'CONFIRMED', note:'' });
+        const lines = reactive([{ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_no:'', line_note:'' }]);
+        const loadRef = async()=>{ customers.value = await request('/api/customers'); products.value = await request('/api/products'); docs.value = await request('/api/orders'); inv.value = await request('/api/inventory/summary'); };
+        const addLine=()=>lines.push({ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_no:'', line_note:''});
+        const delLine=(i)=>{ if(lines.length>1) lines.splice(i,1); };
+        const avail=(pid)=>{ const r = inv.value.find(x=>x.product_id===pid); return r? r.on_hand : 0; };
+        const onProduct=(row)=>{ const p = products.value.find(x=>x.id===row.product_id); if(!p) return; row.spec_snapshot=p.spec; row.unit=p.unit; row.unit_price=p.default_price || 0; };
+        const save=async()=>{ await request('/api/orders',{method:'POST',body:JSON.stringify({ ...head, items: lines })}); await loadRef(); };
+        loadRef();
+        return { customers, products, docs, inv, head, lines, addLine, delLine, onProduct, save, avail };
+      },
+      template:`<el-card><h3>销售出库 /sales</h3><el-descriptions :column="4" border><el-descriptions-item label="销售单号">{{head.sales_no}}</el-descriptions-item><el-descriptions-item label="客户"><el-select v-model="head.customer_id" style="width:160px"><el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id"/></el-select></el-descriptions-item><el-descriptions-item label="币种"><el-input v-model="head.currency"/></el-descriptions-item><el-descriptions-item label="ETD"><el-input v-model="head.etd"/></el-descriptions-item></el-descriptions><div class="toolbar" style="margin-top:8px"><el-button type="primary" @click="addLine">新增行</el-button><el-button type="success" @click="save">保存(出库)</el-button></div><el-table :data="lines" border class="excel"><el-table-column type="index" width="50" label="#"/><el-table-column label="商品"><template #default="s"><el-select v-model="s.row.product_id" @change="onProduct(s.row)" style="width:100%"><el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id"/></el-select></template></el-table-column><el-table-column label="规格"><template #default="s"><el-input v-model="s.row.spec_snapshot"/></template></el-table-column><el-table-column label="单位"><template #default="s"><el-input v-model="s.row.unit"/></template></el-table-column><el-table-column label="可用库存"><template #default="s"><span :style="{color: avail(s.row.product_id)>=s.row.quantity ? '#2563eb':'#dc2626'}">{{ avail(s.row.product_id) }}</span></template></el-table-column><el-table-column label="数量"><template #default="s"><el-input-number v-model="s.row.quantity" :min="0.01"/></template></el-table-column><el-table-column label="单价"><template #default="s"><el-input-number v-model="s.row.unit_price" :min="0"/></template></el-table-column><el-table-column label="箱号"><template #default="s"><el-input v-model="s.row.carton_no"/></template></el-table-column><el-table-column label="操作" width="80"><template #default="s"><el-button type="danger" plain @click="delLine(s.$index)">删</el-button></template></el-table-column></el-table><el-table :data="docs" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="sales_no" label="销售单号"/><el-table-column prop="customer_name" label="客户"/></el-table></el-card>`
+    };
+
+    const Inventory = {
+      setup() {
+        const summary = ref([]), movements = ref([]);
+        const load = async()=>{ summary.value = await request('/api/inventory/summary'); movements.value = await request('/api/inventory/movements'); };
+        load();
+        return { summary, movements, load };
+      },
+      template:`<el-card><h3>库存查询 /inventory</h3><el-button @click="load">刷新</el-button><el-divider content-position="left">库存汇总</el-divider><el-table :data="summary" border><el-table-column prop="product_code" label="商品编码"/><el-table-column prop="name" label="商品"/><el-table-column prop="total_in" label="入库"/><el-table-column prop="total_out" label="出库"/><el-table-column prop="on_hand" label="在手"/><el-table-column prop="stock_status" label="状态"/></el-table><el-divider content-position="left">库存流水</el-divider><el-table :data="movements" border><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="movement_type" label="类型"/><el-table-column prop="product_code" label="商品编码"/><el-table-column prop="quantity" label="数量"/><el-table-column prop="ref_type" label="来源"/><el-table-column prop="ref_id" label="来源ID"/></el-table></el-card>`
+    };
+
+    const DevPage = { template:`<el-card><div class='dev'>开发中（V1暂缓模块）</div></el-card>` };
+
+    const routes = [
+      { path:'/', redirect:'/base-data' },
+      { path:'/base-data', component: BaseData },
+      { path:'/purchase', component: Purchase },
+      { path:'/sales', component: Sales },
+      { path:'/inventory', component: Inventory },
+      { path:'/login', component: DevPage },
+      { path:'/customs', component: DevPage },
+      { path:'/documents', component: DevPage },
+      { path:'/io-tools', component: DevPage },
+      { path:'/analytics', component: DevPage },
+    ];
+
+    const router = createRouter({ history:createWebHashHistory(), routes });
+
+    const App = {
+      setup() {
+        const menu = [
+          {path:'/base-data',label:'基础资料'},
+          {path:'/purchase',label:'采购入库'},
+          {path:'/sales',label:'销售出库'},
+          {path:'/inventory',label:'库存查询'},
+          {path:'/customs',label:'报关(开发中)'},
+          {path:'/documents',label:'单证(开发中)'},
+          {path:'/analytics',label:'看板(开发中)'}
+        ];
+        return { menu };
+      },
+      template:`<div><div class='top'>WM V1（后端+SQLite真数据）</div><el-container><el-aside width='220px' style='background:#fff;border-right:1px solid #e5e7eb'><el-menu :default-active='$route.path' router><el-menu-item v-for='m in menu' :key='m.path' :index='m.path'>{{m.label}}</el-menu-item></el-menu></el-aside><el-main class='main'><router-view/></el-main></el-container></div>`
+    };
+
+    createApp(App).use(router).use(ElementPlus).mount('#app');
+  </script>
+</body>
+</html>
