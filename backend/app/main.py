@@ -9,12 +9,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+
 def resolve_db_path() -> Path:
-    # source mode: /repo/backend/wm.db
     src_candidate = Path(__file__).resolve().parents[2] / "backend" / "wm.db"
     if src_candidate.parent.exists():
         return src_candidate
-    # packaged mode (.pyz): fallback to current working directory
     return Path.cwd() / "wm.db"
 
 
@@ -32,6 +31,15 @@ def init_db() -> None:
     with closing(get_conn()) as conn:
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_code TEXT NOT NULL UNIQUE,
+                customer_name TEXT NOT NULL UNIQUE,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                country TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sku TEXT NOT NULL UNIQUE,
@@ -68,9 +76,11 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS sales_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER,
                 customer_name TEXT NOT NULL,
                 customer_po TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (customer_id) REFERENCES customers(id)
             );
 
             CREATE TABLE IF NOT EXISTS sales_order_lines (
@@ -111,6 +121,7 @@ def init_db() -> None:
             );
             """
         )
+
         conn.commit()
 
 
@@ -128,7 +139,7 @@ def require_positive_number(data: dict[str, Any], key: str, num_type: type = int
 
 
 class AppHandler(BaseHTTPRequestHandler):
-    server_version = "WMZeroDep/0.2"
+    server_version = "WMSaaSERP/0.3"
 
     def _set_headers(self, code: int = 200, content_type: str = "application/json") -> None:
         self.send_response(code)
@@ -160,16 +171,67 @@ class AppHandler(BaseHTTPRequestHandler):
         self._set_headers(204)
 
     def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = urlparse(self.path).path
         try:
             if path == "/health":
                 return self._json(200, {"status": "ok"})
+
+            if path == "/api/customers":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute(
+                        "SELECT id, customer_code, customer_name, currency, country, created_at FROM customers ORDER BY id DESC"
+                    ).fetchall()
+                return self._json(200, [dict(r) for r in rows])
 
             if path == "/api/products":
                 with closing(get_conn()) as conn:
                     rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
                 return self._json(200, [dict(r) for r in rows])
+
+            if path == "/api/orders":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute(
+                        "SELECT id, customer_id, customer_name, customer_po, created_at FROM sales_orders ORDER BY id DESC"
+                    ).fetchall()
+                return self._json(200, [dict(r) for r in rows])
+
+            if path == "/api/shipments":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT s.id, s.shipment_no, s.order_id, s.created_at,
+                               COALESCE(SUM(b.gross_weight_kg), 0) AS total_gross_weight_kg,
+                               COALESCE(SUM(b.net_weight_kg), 0) AS total_net_weight_kg,
+                               COUNT(b.id) AS box_count
+                        FROM shipments s
+                        LEFT JOIN shipment_boxes b ON b.shipment_id = s.id
+                        GROUP BY s.id
+                        ORDER BY s.id DESC
+                        """
+                    ).fetchall()
+                return self._json(200, [dict(r) for r in rows])
+
+            if path.startswith("/api/shipments/"):
+                shipment_id = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    shipment = conn.execute(
+                        "SELECT id, order_id, shipment_no, created_at FROM shipments WHERE id = ?",
+                        (shipment_id,),
+                    ).fetchone()
+                    if not shipment:
+                        return self._json(404, {"detail": "发货单不存在"})
+                    boxes = conn.execute(
+                        "SELECT id, box_code, gross_weight_kg, net_weight_kg, volume_cbm FROM shipment_boxes WHERE shipment_id = ? ORDER BY id",
+                        (shipment_id,),
+                    ).fetchall()
+                    box_items: list[dict[str, Any]] = []
+                    for b in boxes:
+                        items = conn.execute(
+                            "SELECT sku, qty FROM shipment_box_items WHERE box_id = ? ORDER BY id",
+                            (b["id"],),
+                        ).fetchall()
+                        box_items.append({**dict(b), "items": [dict(i) for i in items]})
+                return self._json(200, {"shipment": dict(shipment), "boxes": box_items})
 
             if path.startswith("/api/orders/"):
                 order_id = int(path.split("/")[-1])
@@ -215,11 +277,27 @@ class AppHandler(BaseHTTPRequestHandler):
             return self._json(500, {"detail": f"服务器错误: {exc}"})
 
     def do_POST(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = urlparse(self.path).path
         now = datetime.utcnow().isoformat()
         try:
             data = self._read_json()
+
+            if path == "/api/customers":
+                for k in ["customer_code", "customer_name"]:
+                    if not data.get(k):
+                        return self._json(400, {"detail": f"字段缺失: {k}"})
+                currency = data.get("currency") or "USD"
+                country = data.get("country") or ""
+                with closing(get_conn()) as conn:
+                    try:
+                        conn.execute(
+                            "INSERT INTO customers (customer_code, customer_name, currency, country, created_at) VALUES (?, ?, ?, ?, ?)",
+                            (data["customer_code"], data["customer_name"], currency, country, now),
+                        )
+                        conn.commit()
+                    except sqlite3.IntegrityError as exc:
+                        return self._json(400, {"detail": f"客户创建失败: {exc}"})
+                return self._json(200, {"message": "客户创建成功", "customer_code": data["customer_code"]})
 
             if path == "/api/products":
                 for k in [
@@ -239,7 +317,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 carton_height_cm = require_positive_number(data, "carton_height_cm", float)
                 standard_gross_weight_kg = require_positive_number(data, "standard_gross_weight_kg", float)
                 standard_net_weight_kg = require_positive_number(data, "standard_net_weight_kg", float)
-
                 with closing(get_conn()) as conn:
                     try:
                         conn.execute(
@@ -282,7 +359,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 qty = require_positive_number(data, "qty", int)
                 if not sku or not reference_no:
                     return self._json(400, {"detail": "字段缺失: sku/reference_no"})
-
                 with closing(get_conn()) as conn:
                     product = conn.execute("SELECT sku FROM products WHERE sku = ?", (sku,)).fetchone()
                     if not product:
@@ -299,22 +375,34 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self._json(200, {"message": "入库成功", "sku": sku, "qty": qty})
 
             if path == "/api/orders":
-                customer_name = data.get("customer_name")
-                customer_po = data.get("customer_po")
+                customer_id = data.get("customer_id")
+                customer_name = (data.get("customer_name") or "").strip()
+                customer_po = (data.get("customer_po") or "").strip()
                 lines = data.get("lines", [])
-                if not customer_name or not customer_po:
-                    return self._json(400, {"detail": "字段缺失: customer_name/customer_po"})
+                if not customer_po:
+                    return self._json(400, {"detail": "字段缺失: customer_po"})
                 if not isinstance(lines, list) or len(lines) == 0:
                     return self._json(400, {"detail": "lines 必须是非空数组"})
 
                 with closing(get_conn()) as conn:
+                    if customer_id is not None:
+                        if not isinstance(customer_id, int) or customer_id <= 0:
+                            return self._json(400, {"detail": "customer_id 必须是正整数"})
+                        row = conn.execute(
+                            "SELECT customer_name FROM customers WHERE id = ?", (customer_id,)
+                        ).fetchone()
+                        if not row:
+                            return self._json(404, {"detail": "客户不存在"})
+                        customer_name = row["customer_name"]
+                    elif not customer_name:
+                        return self._json(400, {"detail": "需要 customer_id 或 customer_name"})
+
                     cur = conn.cursor()
                     cur.execute(
-                        "INSERT INTO sales_orders (customer_name, customer_po, created_at) VALUES (?, ?, ?)",
-                        (customer_name, customer_po, now),
+                        "INSERT INTO sales_orders (customer_id, customer_name, customer_po, created_at) VALUES (?, ?, ?, ?)",
+                        (customer_id, customer_name, customer_po, now),
                     )
                     order_id = cur.lastrowid
-
                     for line in lines:
                         if not isinstance(line, dict):
                             conn.rollback()
@@ -343,7 +431,6 @@ class AppHandler(BaseHTTPRequestHandler):
                     return self._json(400, {"detail": "字段缺失: shipment_no"})
                 if not isinstance(boxes, list) or len(boxes) == 0:
                     return self._json(400, {"detail": "boxes 必须是非空数组"})
-
                 with closing(get_conn()) as conn:
                     order = conn.execute("SELECT id FROM sales_orders WHERE id = ?", (order_id,)).fetchone()
                     if not order:
@@ -356,11 +443,9 @@ class AppHandler(BaseHTTPRequestHandler):
                         row["sku"]: {"ordered": row["ordered_qty"], "shipped": row["shipped_qty"]}
                         for row in order_lines
                     }
-
                     picked: dict[str, int] = {}
                     total_gross_weight = 0.0
                     total_net_weight = 0.0
-
                     for box in boxes:
                         if not isinstance(box, dict):
                             return self._json(400, {"detail": "box 格式错误"})
@@ -369,14 +454,12 @@ class AppHandler(BaseHTTPRequestHandler):
                             return self._json(400, {"detail": "box 缺少 box_code"})
                         gross = require_positive_number(box, "gross_weight_kg", float)
                         net = require_positive_number(box, "net_weight_kg", float)
-                        volume = require_positive_number(box, "volume_cbm", float)
+                        _ = require_positive_number(box, "volume_cbm", float)
                         items = box.get("items", [])
                         if not isinstance(items, list) or len(items) == 0:
                             return self._json(400, {"detail": f"box {box_code} items 必须非空"})
-
                         total_gross_weight += float(gross)
                         total_net_weight += float(net)
-
                         for item in items:
                             if not isinstance(item, dict):
                                 return self._json(400, {"detail": "item 格式错误"})
@@ -385,7 +468,6 @@ class AppHandler(BaseHTTPRequestHandler):
                                 return self._json(400, {"detail": "item 缺少 sku"})
                             qty = require_positive_number(item, "qty", int)
                             picked[sku] = picked.get(sku, 0) + qty
-
                     for sku, qty in picked.items():
                         if sku not in line_map:
                             return self._json(400, {"detail": f"SKU {sku} 不在订单中"})
@@ -395,7 +477,6 @@ class AppHandler(BaseHTTPRequestHandler):
                         bal = conn.execute("SELECT on_hand_qty FROM inventory_balances WHERE sku = ?", (sku,)).fetchone()
                         if not bal or bal["on_hand_qty"] < qty:
                             return self._json(400, {"detail": f"SKU {sku} 库存不足"})
-
                     cur = conn.cursor()
                     try:
                         cur.execute(
@@ -403,7 +484,6 @@ class AppHandler(BaseHTTPRequestHandler):
                             (order_id, shipment_no, now),
                         )
                         shipment_id = cur.lastrowid
-
                         for box in boxes:
                             cur.execute(
                                 "INSERT INTO shipment_boxes (shipment_id, box_code, gross_weight_kg, net_weight_kg, volume_cbm) VALUES (?, ?, ?, ?, ?)",
@@ -421,7 +501,6 @@ class AppHandler(BaseHTTPRequestHandler):
                                     "INSERT INTO shipment_box_items (box_id, sku, qty) VALUES (?, ?, ?)",
                                     (box_id, item["sku"], int(item["qty"])),
                                 )
-
                         for sku, qty in picked.items():
                             cur.execute(
                                 "UPDATE inventory_balances SET on_hand_qty = on_hand_qty - ?, shipped_qty = shipped_qty + ? WHERE sku = ?",
@@ -439,7 +518,6 @@ class AppHandler(BaseHTTPRequestHandler):
                     except sqlite3.IntegrityError as exc:
                         conn.rollback()
                         return self._json(400, {"detail": f"发货失败: {exc}"})
-
                 return self._json(
                     200,
                     {

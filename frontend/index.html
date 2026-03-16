@@ -1,73 +1,16 @@
-<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WM 外贸订单库存系统 MVP</title>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 0; background: #f6f8fb; }
-      .wrap { max-width: 1000px; margin: 24px auto; padding: 0 16px; }
-      h1 { margin-bottom: 6px; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); gap: 12px; }
-      .card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-      input, textarea, button { width: 100%; padding: 8px; margin-top: 6px; box-sizing: border-box; }
-      button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
-      pre { background: #111827; color: #e5e7eb; padding: 10px; border-radius: 6px; overflow: auto; min-height: 72px; }
-      .hint { color: #6b7280; font-size: 12px; }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <h1>外贸订单库存系统（MVP）</h1>
-      <p>支持：商品建档、入库、下单、按箱码发货、库存与剩余查看。</p>
-
-      <div class="grid">
-        <section class="card">
-          <h3>1) 新建商品</h3>
-          <input id="p_sku" placeholder="SKU，例如 SKU-RED-M" />
-          <input id="p_category" placeholder="类别名称，例如 T恤" />
-          <input id="p_cat_hs" placeholder="类别HS码，例如 610910" />
-          <input id="p_color" placeholder="颜色" />
-          <input id="p_size" placeholder="尺寸" />
-          <button onclick="createProduct()">提交商品</button>
-        </section>
-
-        <section class="card">
-          <h3>2) 入库</h3>
-          <input id="r_sku" placeholder="SKU" />
-          <input id="r_qty" placeholder="数量" type="number" />
-          <input id="r_ref" placeholder="参考单号" value="GRN-001" />
-          <button onclick="receiveStock()">提交入库</button>
-        </section>
-
-        <section class="card">
-          <h3>3) 创建订单</h3>
-          <input id="o_customer" placeholder="客户名" value="ACME LTD" />
-          <input id="o_po" placeholder="客户PO" value="PO-2026-001" />
-          <textarea id="o_lines" rows="4" placeholder='订单行(JSON): [{"sku":"SKU-RED-M","qty":100}]'></textarea>
-          <button onclick="createOrder()">提交订单</button>
-        </section>
-
-        <section class="card">
-          <h3>4) 按箱码发货</h3>
-          <input id="s_order_id" placeholder="订单ID" type="number" />
-          <input id="s_no" placeholder="发货单号" value="SHIP-001" />
-          <textarea id="s_boxes" rows="6" placeholder='箱明细(JSON): [{"box_code":"BOX-001","gross_weight_kg":12,"net_weight_kg":10,"volume_cbm":0.07,"items":[{"sku":"SKU-RED-M","qty":50}]}]'></textarea>
-          <button onclick="createShipment()">提交发货</button>
-          <p class="hint">每个 box_code 必须唯一；重量来自箱明细。</p>
-        </section>
-
-        <section class="card">
-          <h3>5) 查库存与剩余</h3>
-          <input id="q_sku" placeholder="SKU" />
-          <button onclick="queryInventory()">查询</button>
-        </section>
-      </div>
-
-      <h3>响应结果</h3>
-      <pre id="result">等待操作...</pre>
-    </div>
-
-    <script src="./app.js"></script>
-  </body>
-</html>
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WM SaaS ERP</title><link rel="stylesheet" href="./style.css"></head><body>
+<div class="top"><strong>WM SaaS ERP（外贸订单库存）</strong></div>
+<div class="wrap">
+  <div class="card">
+    <h2>业务导航（每个业务一个页面）</h2>
+    <p class="hint">按照 ERP 习惯拆分页面，并且下游页面可选择基础资料（客户、SKU）进行联动录入。</p>
+    <ul>
+      <li><a href="./pages/base-data.html">基础资料（客户 + 商品）</a></li>
+      <li><a href="./pages/receipt.html">入库业务</a></li>
+      <li><a href="./pages/order.html">销售订单</a></li>
+      <li><a href="./pages/shipment.html">发货装箱</a></li>
+      <li><a href="./pages/inventory.html">库存查询</a></li>
+    </ul>
+  </div>
+</div>
+</body></html>

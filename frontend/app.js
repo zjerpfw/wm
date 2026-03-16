@@ -1,80 +1,60 @@
 const API = "http://127.0.0.1:8000";
-const out = (data) => {
-  document.getElementById("result").textContent = JSON.stringify(data, null, 2);
-};
 
-async function call(url, options = {}) {
-  try {
-    const res = await fetch(`${API}${url}`, {
-      headers: { "Content-Type": "application/json" },
-      ...options,
-    });
-    const data = await res.json();
-    out(data);
-  } catch (err) {
-    out({ error: String(err) });
+function setResult(data) {
+  const el = document.getElementById("result");
+  if (el) el.textContent = JSON.stringify(data, null, 2);
+}
+
+async function api(url, options = {}) {
+  const res = await fetch(`${API}${url}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const data = await res.json();
+  setResult(data);
+  if (!res.ok) throw new Error(data.detail || "请求失败");
+  return data;
+}
+
+function renderTable(elId, columns, rows) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<div class="hint">暂无数据</div>';
+    return;
   }
+  const h = columns.map((c) => `<th>${c}</th>`).join("");
+  const b = rows
+    .map((r) => `<tr>${columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`)
+    .join("");
+  el.innerHTML = `<table><thead><tr>${h}</tr></thead><tbody>${b}</tbody></table>`;
 }
 
-async function createProduct() {
-  const payload = {
-    sku: document.getElementById("p_sku").value,
-    category_name: document.getElementById("p_category").value,
-    category_hs_code: document.getElementById("p_cat_hs").value,
-    color: document.getElementById("p_color").value,
-    size: document.getElementById("p_size").value,
-    default_packing_qty: 50,
-    carton_length_cm: 60,
-    carton_width_cm: 40,
-    carton_height_cm: 35,
-    standard_gross_weight_kg: 12,
-    standard_net_weight_kg: 10,
-    customer_hs_code: "6109100000",
-    customs_cn_name: document.getElementById("p_category").value || "未命名类别",
-  };
-  await call("/api/products", { method: "POST", body: JSON.stringify(payload) });
-}
+async function fetchCustomers() { return api('/api/customers'); }
+async function fetchProducts() { return api('/api/products'); }
+async function fetchOrders() { return api('/api/orders'); }
+async function fetchShipments() { return api('/api/shipments'); }
 
-async function receiveStock() {
-  await call("/api/inventory/receipt", {
-    method: "POST",
-    body: JSON.stringify({
-      sku: document.getElementById("r_sku").value,
-      qty: Number(document.getElementById("r_qty").value),
-      reference_no: document.getElementById("r_ref").value,
-    }),
+function fillSelect(selectId, rows, valueKey, labelKey) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  const previous = el.value;
+  el.innerHTML = '<option value="">-- 请选择 --</option>';
+  rows.forEach((r) => {
+    const op = document.createElement('option');
+    op.value = r[valueKey];
+    op.textContent = r[labelKey];
+    el.appendChild(op);
   });
+  if ([...el.options].some((o) => o.value === previous)) el.value = previous;
 }
 
-async function createOrder() {
-  await call("/api/orders", {
-    method: "POST",
-    body: JSON.stringify({
-      customer_name: document.getElementById("o_customer").value,
-      customer_po: document.getElementById("o_po").value,
-      lines: JSON.parse(document.getElementById("o_lines").value || "[]"),
-    }),
-  });
-}
-
-async function createShipment() {
-  await call("/api/shipments", {
-    method: "POST",
-    body: JSON.stringify({
-      order_id: Number(document.getElementById("s_order_id").value),
-      shipment_no: document.getElementById("s_no").value,
-      boxes: JSON.parse(document.getElementById("s_boxes").value || "[]"),
-    }),
-  });
-}
-
-async function queryInventory() {
-  const sku = document.getElementById("q_sku").value;
-  await call(`/api/inventory/summary/${encodeURIComponent(sku)}`);
-}
-
-window.createProduct = createProduct;
-window.receiveStock = receiveStock;
-window.createOrder = createOrder;
-window.createShipment = createShipment;
-window.queryInventory = queryInventory;
+window.WM = {
+  api,
+  renderTable,
+  fetchCustomers,
+  fetchProducts,
+  fetchOrders,
+  fetchShipments,
+  fillSelect,
+};
