@@ -1,542 +1,150 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>外贸 SaaS ERP 原型（多行表体增强版）</title>
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
-    <style>
-      body { margin: 0; background: #f3f5f8; }
-      .header { background: #0f172a; color: #fff; padding: 12px 18px; display:flex; justify-content:space-between; align-items:center; }
-      .title { font-size: 18px; font-weight: 600; }
-      .wrap { padding: 14px; }
-      .sheet-title { font-weight: 600; margin-bottom: 8px; }
-      .sheet-note { color: #6b7280; font-size: 12px; margin-bottom: 10px; }
-      .toolbar { margin-bottom: 10px; display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
-      .excel-table .el-input__wrapper, .excel-table .el-select .el-input__wrapper { box-shadow:none; border:1px solid #d1d5db; }
-      .excel-table .el-table__cell { padding: 4px 0; }
-      .ok { color:#2563eb; font-weight:600; }
-      .warn { color:#dc2626; font-weight:600; }
-      .kpi { background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px; }
-      .kpi h4 { margin:0;color:#6b7280;font-size:12px; }
-      .kpi p { margin:4px 0 0;font-size:20px;font-weight:700;color:#0f172a; }
-    </style>
-  </head>
-  <body>
-    <div id="app"></div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WM V1</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    body { margin:0; background:#f5f7fb; }
+    .top { background:#0f172a; color:#fff; padding:12px 16px; font-weight:600; }
+    .main { padding:14px; }
+    .hint { color:#6b7280; font-size:12px; margin:6px 0; }
+    .excel .el-input__wrapper,.excel .el-select .el-input__wrapper{ box-shadow:none; border:1px solid #d1d5db; }
+    .dev { padding:32px; text-align:center; color:#6b7280; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+  <script>
+    const { createApp, reactive, ref, computed } = Vue;
+    const { createRouter, createWebHashHistory } = VueRouter;
+    const API = 'http://127.0.0.1:8000';
 
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
-    <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
-    <script>
-      const { createApp, reactive, computed, ref } = Vue;
-      const { createRouter, createWebHashHistory } = VueRouter;
+    async function request(url, options={}) {
+      const res = await fetch(API + url, { headers:{'Content-Type':'application/json'}, ...options });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || '请求失败');
+      return data.data;
+    }
 
-      const store = reactive({
-        users: [
-          { username: 'admin', password: '123456', role: 'admin', name: '系统管理员' },
-          { username: 'buyer', password: '123456', role: 'purchase', name: '采购员' },
-          { username: 'sales', password: '123456', role: 'sales', name: '销售员' },
-          { username: 'finance', password: '123456', role: 'finance', name: '财务/报关' }
-        ],
-        currentUser: null,
-        products: [
-          {
-            id: 1, sku: 'SKU-TSHIRT-M-RED', name: '针织T恤', spec: 'M/红色', unit: '件', defaultPrice: 35,
-            hsCode: '6109100000', customsName: '针织T恤', material: '95%棉', originCountry: 'CN',
-            brand: 'WM BASIC', season: 'SS26', moq: 300, leadTimeDays: 20,
-            cartonQty: 50, cartonL: 60, cartonW: 40, cartonH: 35,
-            unitNetWeight: 0.2, unitGrossWeight: 0.24, safetyStock: 30,
-            exportRebateRate: 0.13
-          },
-          {
-            id: 2, sku: 'SKU-JEANS-32-BLUE', name: '牛仔裤', spec: '32码/蓝色', unit: '条', defaultPrice: 68,
-            hsCode: '6203420090', customsName: '牛仔长裤', material: '棉弹牛仔', originCountry: 'CN',
-            brand: 'WM DENIM', season: 'FW26', moq: 200, leadTimeDays: 28,
-            cartonQty: 30, cartonL: 58, cartonW: 38, cartonH: 32,
-            unitNetWeight: 0.45, unitGrossWeight: 0.52, safetyStock: 20,
-            exportRebateRate: 0.10
-          }
-        ],
-        suppliers: [
-          { id: 1, code:'SUP-CN-001', name: '广州成衣供应商', contact: '张先生', phone: '13800001111', country: 'CN', currency: 'CNY', paymentTerm: '30%预付+70%发货前', taxMode: '含税13%' }
-        ],
-        customers: [
-          { id: 1, code: 'CUST-US-001', name: 'ACME Trading', country: 'US', currency: 'USD', defaultIncoterm: 'FOB', defaultPort: 'Shenzhen', paymentTerm: 'T/T 30/70', priceLevel: 'A' }
-        ],
-        purchases: [],
-        sales: [],
-        customsDeclarations: []
-      });
+    const BaseData = {
+      setup() {
+        const products = ref([]), customers = ref([]), suppliers = ref([]);
+        const p = reactive({ product_code:'', name:'', spec:'', unit:'PCS', hs_code:'', customs_name:'', material:'', origin_country:'CN', qty_per_carton:0, carton_length:0, carton_width:0, carton_height:0, net_weight:0, gross_weight:0, safety_stock:0 });
+        const c = reactive({ code:'', name:'', country:'', currency:'USD', trade_term:'', default_port:'', payment_term:'', contact:'', phone:'', email:'', note:'' });
+        const s = reactive({ code:'', name:'', country:'', currency:'USD', payment_term:'', tax_scheme:'', contact:'', phone:'', email:'', note:'' });
 
-      const roleAccess = {
-        admin: ['/base-data','/purchase','/sales','/inventory','/customs','/documents','/io-tools','/analytics'],
-        purchase: ['/base-data','/purchase','/inventory','/io-tools'],
-        sales: ['/sales','/inventory','/documents'],
-        finance: ['/inventory','/customs','/documents','/io-tools','/analytics']
-      };
+        const load = async () => {
+          products.value = await request('/api/products');
+          customers.value = await request('/api/customers');
+          suppliers.value = await request('/api/suppliers');
+        };
+        const saveP = async () => { await request('/api/products',{method:'POST',body:JSON.stringify(p)}); await load(); };
+        const saveC = async () => { await request('/api/customers',{method:'POST',body:JSON.stringify(c)}); await load(); };
+        const saveS = async () => { await request('/api/suppliers',{method:'POST',body:JSON.stringify(s)}); await load(); };
 
-      const inventoryRows = computed(() => store.products.map((p) => {
-        const inQty = store.purchases.flatMap(d => d.lines).filter(x => x.productId === p.id).reduce((s,x)=>s+x.qty,0);
-        const outQty = store.sales.flatMap(d => d.lines).filter(x => x.productId === p.id).reduce((s,x)=>s+x.qty,0);
-        const availableQty = inQty - outQty;
-        return { productId:p.id, sku:p.sku, productName:p.name, spec:p.spec, unit:p.unit, inQty, outQty, availableQty, safetyStock:p.safetyStock, stockStatus: availableQty < p.safetyStock ? '低库存' : '正常' };
-      }));
+        load();
+        return { p,c,s,products,customers,suppliers,saveP,saveC,saveS };
+      },
+      template:`
+      <el-card>
+        <h3>基础资料 /base-data</h3>
+        <div class="hint">Excel风格：表头+表体（单行录入后保存）</div>
+        <el-divider content-position="left">商品表体</el-divider>
+        <el-table :data="[p]" border class="excel"><el-table-column label="编码"><template #default><el-input v-model="p.product_code"/></template></el-table-column><el-table-column label="名称"><template #default><el-input v-model="p.name"/></template></el-table-column><el-table-column label="规格"><template #default><el-input v-model="p.spec"/></template></el-table-column><el-table-column label="单位"><template #default><el-input v-model="p.unit"/></template></el-table-column><el-table-column label="HS"><template #default><el-input v-model="p.hs_code"/></template></el-table-column><el-table-column label="安全库存"><template #default><el-input-number v-model="p.safety_stock" :min="0"/></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="saveP">保存</el-button></template></el-table-column></el-table>
+        <el-table :data="products" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="product_code" label="编码"/><el-table-column prop="name" label="名称"/><el-table-column prop="spec" label="规格"/><el-table-column prop="unit" label="单位" width="80"/></el-table>
 
-      const kpi = computed(() => {
-        const purchaseAmount = store.purchases.reduce((sum, d) => sum + d.lines.reduce((s,l)=>s+l.qty*l.unitPrice,0), 0);
-        const salesAmount = store.sales.reduce((sum, d) => sum + d.lines.reduce((s,l)=>s+l.qty*l.unitPrice,0), 0);
-        const lowStockCount = inventoryRows.value.filter(x=>x.availableQty < x.safetyStock).length;
-        return { purchaseAmount, salesAmount, grossProfit: salesAmount - purchaseAmount, lowStockCount };
-      });
+        <el-divider content-position="left">客户表体</el-divider>
+        <el-table :data="[c]" border class="excel"><el-table-column label="编码"><template #default><el-input v-model="c.code"/></template></el-table-column><el-table-column label="名称"><template #default><el-input v-model="c.name"/></template></el-table-column><el-table-column label="国家"><template #default><el-input v-model="c.country"/></template></el-table-column><el-table-column label="币种"><template #default><el-input v-model="c.currency"/></template></el-table-column><el-table-column label="条款"><template #default><el-input v-model="c.trade_term"/></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="saveC">保存</el-button></template></el-table-column></el-table>
+        <el-table :data="customers" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="code" label="编码"/><el-table-column prop="name" label="名称"/></el-table>
 
-      function getAvailableQty(productId) {
-        const row = inventoryRows.value.find(x => x.productId === productId);
-        return row ? row.availableQty : 0;
-      }
+        <el-divider content-position="left">供应商表体</el-divider>
+        <el-table :data="[s]" border class="excel"><el-table-column label="编码"><template #default><el-input v-model="s.code"/></template></el-table-column><el-table-column label="名称"><template #default><el-input v-model="s.name"/></template></el-table-column><el-table-column label="国家"><template #default><el-input v-model="s.country"/></template></el-table-column><el-table-column label="币种"><template #default><el-input v-model="s.currency"/></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="saveS">保存</el-button></template></el-table-column></el-table>
+        <el-table :data="suppliers" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="code" label="编码"/><el-table-column prop="name" label="名称"/></el-table>
+      </el-card>`
+    };
 
-      function ensureLogin(router) {
-        router.beforeEach((to, _, next) => {
-          if (to.path === '/login') return next();
-          if (!store.currentUser) return next('/login');
-          const allow = roleAccess[store.currentUser.role] || [];
-          if (!allow.includes(to.path)) return next('/inventory');
-          next();
-        });
-      }
+    const Purchase = {
+      setup() {
+        const suppliers = ref([]), products = ref([]), docs = ref([]);
+        const head = reactive({ purchase_no:'PO-'+Date.now(), supplier_id:null, currency:'USD', eta:'', port:'', payment_term:'', transport_mode:'SEA', status:'CONFIRMED', note:'' });
+        const lines = reactive([{ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_count:0, line_note:'' }]);
+        const loadRef = async()=>{ suppliers.value = await request('/api/suppliers'); products.value = await request('/api/products'); docs.value = await request('/api/purchases'); };
+        const addLine=()=>lines.push({ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_count:0, line_note:''});
+        const delLine=(i)=>{ if(lines.length>1) lines.splice(i,1); };
+        const onProduct=(row)=>{ const p = products.value.find(x=>x.id===row.product_id); if(!p) return; row.spec_snapshot=p.spec; row.unit=p.unit; };
+        const save=async()=>{ await request('/api/purchases',{method:'POST',body:JSON.stringify({ ...head, items: lines })}); await loadRef(); };
+        loadRef();
+        return { suppliers, products, docs, head, lines, addLine, delLine, onProduct, save };
+      },
+      template:`<el-card><h3>采购入库 /purchase</h3><el-descriptions :column="4" border><el-descriptions-item label="采购单号">{{head.purchase_no}}</el-descriptions-item><el-descriptions-item label="供应商"><el-select v-model="head.supplier_id" style="width:160px"><el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id"/></el-select></el-descriptions-item><el-descriptions-item label="币种"><el-input v-model="head.currency"/></el-descriptions-item><el-descriptions-item label="ETA"><el-input v-model="head.eta"/></el-descriptions-item></el-descriptions><div class="toolbar" style="margin-top:8px"><el-button type="primary" @click="addLine">新增行</el-button><el-button type="success" @click="save">保存(入库)</el-button></div><el-table :data="lines" border class="excel"><el-table-column type="index" width="50" label="#"/><el-table-column label="商品"><template #default="s"><el-select v-model="s.row.product_id" @change="onProduct(s.row)" style="width:100%"><el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id"/></el-select></template></el-table-column><el-table-column label="规格"><template #default="s"><el-input v-model="s.row.spec_snapshot"/></template></el-table-column><el-table-column label="单位"><template #default="s"><el-input v-model="s.row.unit"/></template></el-table-column><el-table-column label="数量"><template #default="s"><el-input-number v-model="s.row.quantity" :min="0.01"/></template></el-table-column><el-table-column label="单价"><template #default="s"><el-input-number v-model="s.row.unit_price" :min="0"/></template></el-table-column><el-table-column label="箱数"><template #default="s"><el-input-number v-model="s.row.carton_count" :min="0"/></template></el-table-column><el-table-column label="操作" width="80"><template #default="s"><el-button type="danger" plain @click="delLine(s.$index)">删</el-button></template></el-table-column></el-table><el-table :data="docs" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="purchase_no" label="采购单号"/><el-table-column prop="supplier_name" label="供应商"/></el-table></el-card>`
+    };
 
-      function csvEscape(v) {
-        const s = String(v ?? '');
-        if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replaceAll('"', '""') + '"';
-        return s;
-      }
-      function downloadCsv(filename, headers, rows) {
-        const csv = [headers.join(','), ...rows.map(r => headers.map(h => csvEscape(r[h])).join(','))].join('\n');
-        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
+    const Sales = {
+      setup() {
+        const customers = ref([]), products = ref([]), docs = ref([]), inv = ref([]);
+        const head = reactive({ sales_no:'SO-'+Date.now(), customer_id:null, currency:'USD', port:'', etd:'', payment_term:'', transport_mode:'SEA', shipping_mark:'', status:'CONFIRMED', note:'' });
+        const lines = reactive([{ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_no:'', line_note:'' }]);
+        const loadRef = async()=>{ customers.value = await request('/api/customers'); products.value = await request('/api/products'); docs.value = await request('/api/orders'); inv.value = await request('/api/inventory/summary'); };
+        const addLine=()=>lines.push({ product_id:null, spec_snapshot:'', unit:'PCS', quantity:1, unit_price:0, carton_no:'', line_note:''});
+        const delLine=(i)=>{ if(lines.length>1) lines.splice(i,1); };
+        const avail=(pid)=>{ const r = inv.value.find(x=>x.product_id===pid); return r? r.on_hand : 0; };
+        const onProduct=(row)=>{ const p = products.value.find(x=>x.id===row.product_id); if(!p) return; row.spec_snapshot=p.spec; row.unit=p.unit; row.unit_price=p.default_price || 0; };
+        const save=async()=>{ await request('/api/orders',{method:'POST',body:JSON.stringify({ ...head, items: lines })}); await loadRef(); };
+        loadRef();
+        return { customers, products, docs, inv, head, lines, addLine, delLine, onProduct, save, avail };
+      },
+      template:`<el-card><h3>销售出库 /sales</h3><el-descriptions :column="4" border><el-descriptions-item label="销售单号">{{head.sales_no}}</el-descriptions-item><el-descriptions-item label="客户"><el-select v-model="head.customer_id" style="width:160px"><el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id"/></el-select></el-descriptions-item><el-descriptions-item label="币种"><el-input v-model="head.currency"/></el-descriptions-item><el-descriptions-item label="ETD"><el-input v-model="head.etd"/></el-descriptions-item></el-descriptions><div class="toolbar" style="margin-top:8px"><el-button type="primary" @click="addLine">新增行</el-button><el-button type="success" @click="save">保存(出库)</el-button></div><el-table :data="lines" border class="excel"><el-table-column type="index" width="50" label="#"/><el-table-column label="商品"><template #default="s"><el-select v-model="s.row.product_id" @change="onProduct(s.row)" style="width:100%"><el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id"/></el-select></template></el-table-column><el-table-column label="规格"><template #default="s"><el-input v-model="s.row.spec_snapshot"/></template></el-table-column><el-table-column label="单位"><template #default="s"><el-input v-model="s.row.unit"/></template></el-table-column><el-table-column label="可用库存"><template #default="s"><span :style="{color: avail(s.row.product_id)>=s.row.quantity ? '#2563eb':'#dc2626'}">{{ avail(s.row.product_id) }}</span></template></el-table-column><el-table-column label="数量"><template #default="s"><el-input-number v-model="s.row.quantity" :min="0.01"/></template></el-table-column><el-table-column label="单价"><template #default="s"><el-input-number v-model="s.row.unit_price" :min="0"/></template></el-table-column><el-table-column label="箱号"><template #default="s"><el-input v-model="s.row.carton_no"/></template></el-table-column><el-table-column label="操作" width="80"><template #default="s"><el-button type="danger" plain @click="delLine(s.$index)">删</el-button></template></el-table-column></el-table><el-table :data="docs" border size="small" style="margin-top:8px"><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="sales_no" label="销售单号"/><el-table-column prop="customer_name" label="客户"/></el-table></el-card>`
+    };
 
-      function newPurchaseLine() {
-        return { lineNo: Date.now() + Math.random(), productId:null, spec:'', unit:'', qty:1, unitPrice:0, cartonCount:0, remark:'' };
-      }
-      function newSalesLine() {
-        return { lineNo: Date.now() + Math.random(), productId:null, spec:'', unit:'', qty:1, unitPrice:0, availableQty:0, boxNo:'', remark:'' };
-      }
+    const Inventory = {
+      setup() {
+        const summary = ref([]), movements = ref([]);
+        const load = async()=>{ summary.value = await request('/api/inventory/summary'); movements.value = await request('/api/inventory/movements'); };
+        load();
+        return { summary, movements, load };
+      },
+      template:`<el-card><h3>库存查询 /inventory</h3><el-button @click="load">刷新</el-button><el-divider content-position="left">库存汇总</el-divider><el-table :data="summary" border><el-table-column prop="product_code" label="商品编码"/><el-table-column prop="name" label="商品"/><el-table-column prop="total_in" label="入库"/><el-table-column prop="total_out" label="出库"/><el-table-column prop="on_hand" label="在手"/><el-table-column prop="stock_status" label="状态"/></el-table><el-divider content-position="left">库存流水</el-divider><el-table :data="movements" border><el-table-column prop="id" label="ID" width="60"/><el-table-column prop="movement_type" label="类型"/><el-table-column prop="product_code" label="商品编码"/><el-table-column prop="quantity" label="数量"/><el-table-column prop="ref_type" label="来源"/><el-table-column prop="ref_id" label="来源ID"/></el-table></el-card>`
+    };
 
-      const LoginPage = {
-        setup() {
-          const form = reactive({ username:'admin', password:'123456' });
-          const login = () => {
-            const u = store.users.find(x=>x.username===form.username && x.password===form.password);
-            if (!u) return ElementPlus.ElMessage.error('账号或密码错误');
-            store.currentUser = { username:u.username, role:u.role, name:u.name };
-            ElementPlus.ElMessage.success('登录成功');
-            router.push('/base-data');
-          };
-          return { form, login };
-        },
-        template:`<el-row justify="center" style="margin-top:80px;"><el-col :span="8"><el-card header="登录 / 角色选择"><el-form label-width="80px"><el-form-item label="账号"><el-input v-model="form.username" /></el-form-item><el-form-item label="密码"><el-input v-model="form.password" type="password" show-password /></el-form-item><el-button type="primary" @click="login">登录</el-button></el-form><div class="sheet-note">测试账号：admin/buyer/sales/finance，密码均为 123456</div></el-card></el-col></el-row>`
-      };
+    const DevPage = { template:`<el-card><div class='dev'>开发中（V1暂缓模块）</div></el-card>` };
 
-      const BaseDataPage = {
-        setup() {
-          const head = reactive({ docNo: 'BD-' + Date.now(), date: new Date().toLocaleDateString(), operator: store.currentUser?.name || '' });
-          const productLine = reactive({ sku:'', name:'', spec:'', unit:'件', defaultPrice:0, hsCode:'', customsName:'', material:'', originCountry:'CN', brand:'', season:'', moq:0, leadTimeDays:0, cartonQty:0, cartonL:0, cartonW:0, cartonH:0, unitNetWeight:0, unitGrossWeight:0, safetyStock:10, exportRebateRate:0.13 });
-          const supplierLine = reactive({ code:'', name:'', contact:'', phone:'', country:'CN', currency:'CNY', paymentTerm:'', taxMode:'' });
-          const customerLine = reactive({ code:'', name:'', country:'US', currency:'USD', defaultIncoterm:'FOB', defaultPort:'Shenzhen', paymentTerm:'', priceLevel:'A' });
+    const routes = [
+      { path:'/', redirect:'/base-data' },
+      { path:'/base-data', component: BaseData },
+      { path:'/purchase', component: Purchase },
+      { path:'/sales', component: Sales },
+      { path:'/inventory', component: Inventory },
+      { path:'/login', component: DevPage },
+      { path:'/customs', component: DevPage },
+      { path:'/documents', component: DevPage },
+      { path:'/io-tools', component: DevPage },
+      { path:'/analytics', component: DevPage },
+    ];
 
-          const addProduct = () => {
-            if (!productLine.sku || !productLine.name || !productLine.hsCode) return ElementPlus.ElMessage.error('商品编码/名称/HS必填');
-            store.products.push({ id: Date.now(), ...productLine, defaultPrice:Number(productLine.defaultPrice) });
-            Object.assign(productLine, { sku:'', name:'', spec:'', unit:'件', defaultPrice:0, hsCode:'', customsName:'', material:'', originCountry:'CN', brand:'', season:'', moq:0, leadTimeDays:0, cartonQty:0, cartonL:0, cartonW:0, cartonH:0, unitNetWeight:0, unitGrossWeight:0, safetyStock:10, exportRebateRate:0.13 });
-          };
-          const addSupplier = () => { if (!supplierLine.code || !supplierLine.name) return ElementPlus.ElMessage.error('供应商编码和名称必填'); store.suppliers.push({ id:Date.now(), ...supplierLine }); Object.assign(supplierLine,{ code:'', name:'', contact:'', phone:'', country:'CN', currency:'CNY', paymentTerm:'', taxMode:'' }); };
-          const addCustomer = () => { if (!customerLine.code || !customerLine.name) return ElementPlus.ElMessage.error('客户编码和名称必填'); store.customers.push({ id:Date.now(), ...customerLine }); Object.assign(customerLine,{ code:'', name:'', country:'US', currency:'USD', defaultIncoterm:'FOB', defaultPort:'Shenzhen', paymentTerm:'', priceLevel:'A' }); };
-          return { store, head, productLine, supplierLine, customerLine, addProduct, addSupplier, addCustomer };
-        },
-        template:`
-          <el-card>
-            <div class="sheet-title">基础资料（外贸增强字段，表头+表体）</div>
-            <el-descriptions :column="3" border><el-descriptions-item label="单号">{{head.docNo}}</el-descriptions-item><el-descriptions-item label="日期">{{head.date}}</el-descriptions-item><el-descriptions-item label="操作员">{{head.operator}}</el-descriptions-item></el-descriptions>
-            <el-divider content-position="left">Products 表体</el-divider>
-            <el-table :data="[productLine]" border class="excel-table">
-              <el-table-column label="SKU"><template #default><el-input v-model="productLine.sku" /></template></el-table-column>
-              <el-table-column label="名称"><template #default><el-input v-model="productLine.name" /></template></el-table-column>
-              <el-table-column label="规格"><template #default><el-input v-model="productLine.spec" /></template></el-table-column>
-              <el-table-column label="单位"><template #default><el-input v-model="productLine.unit" /></template></el-table-column>
-              <el-table-column label="单价"><template #default><el-input-number v-model="productLine.defaultPrice" :min="0" /></template></el-table-column>
-              <el-table-column label="HS"><template #default><el-input v-model="productLine.hsCode" /></template></el-table-column>
-              <el-table-column label="报关名"><template #default><el-input v-model="productLine.customsName" /></template></el-table-column>
-              <el-table-column label="材质"><template #default><el-input v-model="productLine.material" /></template></el-table-column>
-              <el-table-column label="原产国"><template #default><el-input v-model="productLine.originCountry" /></template></el-table-column>
-              <el-table-column label="品牌"><template #default><el-input v-model="productLine.brand" /></template></el-table-column>
-              <el-table-column label="季节"><template #default><el-input v-model="productLine.season" /></template></el-table-column>
-              <el-table-column label="MOQ"><template #default><el-input-number v-model="productLine.moq" :min="0" /></template></el-table-column>
-              <el-table-column label="交期天数"><template #default><el-input-number v-model="productLine.leadTimeDays" :min="0" /></template></el-table-column>
-              <el-table-column label="每箱数"><template #default><el-input-number v-model="productLine.cartonQty" :min="0" /></template></el-table-column>
-              <el-table-column label="L"><template #default><el-input-number v-model="productLine.cartonL" :min="0" /></template></el-table-column>
-              <el-table-column label="W"><template #default><el-input-number v-model="productLine.cartonW" :min="0" /></template></el-table-column>
-              <el-table-column label="H"><template #default><el-input-number v-model="productLine.cartonH" :min="0" /></template></el-table-column>
-              <el-table-column label="净重"><template #default><el-input-number v-model="productLine.unitNetWeight" :min="0" :step="0.01" /></template></el-table-column>
-              <el-table-column label="毛重"><template #default><el-input-number v-model="productLine.unitGrossWeight" :min="0" :step="0.01" /></template></el-table-column>
-              <el-table-column label="安全库存"><template #default><el-input-number v-model="productLine.safetyStock" :min="0" /></template></el-table-column>
-              <el-table-column label="退税率"><template #default><el-input-number v-model="productLine.exportRebateRate" :min="0" :max="1" :step="0.01" /></template></el-table-column>
-              <el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="addProduct">新增行</el-button></template></el-table-column>
-            </el-table>
-            <el-table :data="store.products" border size="small" style="margin-top:8px"><el-table-column prop="sku" label="SKU" width="150" /><el-table-column prop="name" label="名称" /><el-table-column prop="hsCode" label="HS" width="120" /><el-table-column prop="customsName" label="报关名" /><el-table-column prop="brand" label="品牌" width="100" /><el-table-column prop="safetyStock" label="安全库存" width="90" /></el-table>
+    const router = createRouter({ history:createWebHashHistory(), routes });
 
-            <el-divider content-position="left">Suppliers 表体</el-divider>
-            <el-table :data="[supplierLine]" border class="excel-table"><el-table-column label="编码"><template #default><el-input v-model="supplierLine.code" /></template></el-table-column><el-table-column label="供应商"><template #default><el-input v-model="supplierLine.name" /></template></el-table-column><el-table-column label="联系人"><template #default><el-input v-model="supplierLine.contact" /></template></el-table-column><el-table-column label="电话"><template #default><el-input v-model="supplierLine.phone" /></template></el-table-column><el-table-column label="国家"><template #default><el-input v-model="supplierLine.country" /></template></el-table-column><el-table-column label="币种"><template #default><el-input v-model="supplierLine.currency" /></template></el-table-column><el-table-column label="付款条款"><template #default><el-input v-model="supplierLine.paymentTerm" /></template></el-table-column><el-table-column label="税制"><template #default><el-input v-model="supplierLine.taxMode" /></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="addSupplier">新增行</el-button></template></el-table-column></el-table>
+    const App = {
+      setup() {
+        const menu = [
+          {path:'/base-data',label:'基础资料'},
+          {path:'/purchase',label:'采购入库'},
+          {path:'/sales',label:'销售出库'},
+          {path:'/inventory',label:'库存查询'},
+          {path:'/customs',label:'报关(开发中)'},
+          {path:'/documents',label:'单证(开发中)'},
+          {path:'/analytics',label:'看板(开发中)'}
+        ];
+        return { menu };
+      },
+      template:`<div><div class='top'>WM V1（后端+SQLite真数据）</div><el-container><el-aside width='220px' style='background:#fff;border-right:1px solid #e5e7eb'><el-menu :default-active='$route.path' router><el-menu-item v-for='m in menu' :key='m.path' :index='m.path'>{{m.label}}</el-menu-item></el-menu></el-aside><el-main class='main'><router-view/></el-main></el-container></div>`
+    };
 
-            <el-divider content-position="left">Customers 表体</el-divider>
-            <el-table :data="[customerLine]" border class="excel-table"><el-table-column label="编码"><template #default><el-input v-model="customerLine.code" /></template></el-table-column><el-table-column label="客户"><template #default><el-input v-model="customerLine.name" /></template></el-table-column><el-table-column label="国家"><template #default><el-input v-model="customerLine.country" /></template></el-table-column><el-table-column label="币种"><template #default><el-input v-model="customerLine.currency" /></template></el-table-column><el-table-column label="条款"><template #default><el-input v-model="customerLine.defaultIncoterm" /></template></el-table-column><el-table-column label="港口"><template #default><el-input v-model="customerLine.defaultPort" /></template></el-table-column><el-table-column label="付款条款"><template #default><el-input v-model="customerLine.paymentTerm" /></template></el-table-column><el-table-column label="价格等级"><template #default><el-input v-model="customerLine.priceLevel" /></template></el-table-column><el-table-column label="操作" width="120"><template #default><el-button type="primary" @click="addCustomer">新增行</el-button></template></el-table-column></el-table>
-          </el-card>
-        `
-      };
-
-      const PurchasePage = {
-        setup() {
-          const header = reactive({ billNo:'PUR-'+Date.now(), supplierId:null, incoterm:'FOB', currency:'USD', eta:'', port:'Shenzhen', paymentTerm:'', deliveryType:'SEA' });
-          const lines = reactive([newPurchaseLine()]);
-
-          const onSupplierChange = (id) => {
-            const s=store.suppliers.find(x=>x.id===id); if(!s) return;
-            header.currency = s.currency || 'USD';
-            header.paymentTerm = s.paymentTerm || '';
-          };
-          const onProductChange = (line) => {
-            const p=store.products.find(x=>x.id===line.productId); if(!p) return;
-            line.spec=p.spec; line.unit=p.unit; line.unitPrice=p.defaultPrice;
-            line.cartonCount = p.cartonQty ? Math.ceil((line.qty||0)/p.cartonQty) : 0;
-          };
-          const onQtyChange = (line) => {
-            const p=store.products.find(x=>x.id===line.productId); if(!p) return;
-            line.cartonCount = p.cartonQty ? Math.ceil((line.qty||0)/p.cartonQty) : 0;
-          };
-          const addLine = () => lines.push(newPurchaseLine());
-          const removeLine = (idx) => { if (lines.length===1) return; lines.splice(idx,1); };
-
-          const save = () => {
-            if(!header.supplierId) return ElementPlus.ElMessage.error('请选择供应商');
-            const valid = lines.filter(l => l.productId && l.qty>0);
-            if(!valid.length) return ElementPlus.ElMessage.error('表体至少一行有效商品');
-            store.purchases.push({ id:Date.now(), ...header, lines: valid.map(v => ({...v, qty:Number(v.qty), unitPrice:Number(v.unitPrice)})), createdAt:new Date().toLocaleString() });
-            ElementPlus.ElMessage.success('采购入库成功');
-          };
-
-          const rows = computed(() => store.purchases.flatMap(doc => doc.lines.map(l => ({
-            docNo: doc.billNo,
-            supplierName: (store.suppliers.find(s=>s.id===doc.supplierId)||{}).name || '-',
-            productName: (store.products.find(p=>p.id===l.productId)||{}).name || '-',
-            qty: l.qty,
-            unitPrice: l.unitPrice,
-            amount: (l.qty*l.unitPrice).toFixed(2),
-            incoterm: doc.incoterm,
-            currency: doc.currency,
-            eta: doc.eta
-          }))));
-
-          return { store, header, lines, onSupplierChange, onProductChange, onQtyChange, addLine, removeLine, save, rows };
-        },
-        template:`
-          <el-card><div class="sheet-title">采购入库单（多行表体）</div>
-            <el-descriptions :column="4" border>
-              <el-descriptions-item label="单号">{{header.billNo}}</el-descriptions-item>
-              <el-descriptions-item label="供应商"><el-select v-model="header.supplierId" @change="onSupplierChange" placeholder="选择供应商" style="width:180px"><el-option v-for="s in store.suppliers" :key="s.id" :label="s.name" :value="s.id" /></el-select></el-descriptions-item>
-              <el-descriptions-item label="贸易条款"><el-input v-model="header.incoterm" /></el-descriptions-item>
-              <el-descriptions-item label="币种"><el-input v-model="header.currency" /></el-descriptions-item>
-              <el-descriptions-item label="ETA"><el-input v-model="header.eta" placeholder="2026-04-30" /></el-descriptions-item>
-              <el-descriptions-item label="目的港"><el-input v-model="header.port" /></el-descriptions-item>
-              <el-descriptions-item label="付款条款"><el-input v-model="header.paymentTerm" /></el-descriptions-item>
-              <el-descriptions-item label="运输方式"><el-select v-model="header.deliveryType" style="width:120px"><el-option label="SEA" value="SEA" /><el-option label="AIR" value="AIR" /><el-option label="COURIER" value="COURIER" /></el-select></el-descriptions-item>
-            </el-descriptions>
-
-            <div class="toolbar"><el-button type="primary" @click="addLine">新增表体行</el-button><el-button type="success" @click="save">保存单据</el-button></div>
-            <el-table :data="lines" border class="excel-table">
-              <el-table-column type="index" label="#" width="50" />
-              <el-table-column label="商品"><template #default="scope"><el-select v-model="scope.row.productId" @change="onProductChange(scope.row)" placeholder="选择商品" style="width:100%"><el-option v-for="p in store.products" :key="p.id" :label="p.name" :value="p.id" /></el-select></template></el-table-column>
-              <el-table-column label="规格"><template #default="scope"><el-input v-model="scope.row.spec" readonly /></template></el-table-column>
-              <el-table-column label="单位"><template #default="scope"><el-input v-model="scope.row.unit" readonly /></template></el-table-column>
-              <el-table-column label="数量"><template #default="scope"><el-input-number v-model="scope.row.qty" :min="1" @change="onQtyChange(scope.row)" /></template></el-table-column>
-              <el-table-column label="单价"><template #default="scope"><el-input-number v-model="scope.row.unitPrice" :min="0" /></template></el-table-column>
-              <el-table-column label="箱数"><template #default="scope"><el-input-number v-model="scope.row.cartonCount" :min="0" /></template></el-table-column>
-              <el-table-column label="备注"><template #default="scope"><el-input v-model="scope.row.remark" /></template></el-table-column>
-              <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger" plain @click="removeLine(scope.$index)">删</el-button></template></el-table-column>
-            </el-table>
-
-            <el-table :data="rows" border size="small" style="margin-top:8px"><el-table-column prop="docNo" label="单号" width="140" /><el-table-column prop="supplierName" label="供应商" /><el-table-column prop="productName" label="商品" /><el-table-column prop="qty" label="数量" width="80" /><el-table-column prop="unitPrice" label="单价" width="90" /><el-table-column prop="amount" label="金额" width="100" /><el-table-column prop="incoterm" label="条款" width="80" /><el-table-column prop="currency" label="币种" width="70" /><el-table-column prop="eta" label="ETA" width="100" /></el-table>
-          </el-card>
-        `
-      };
-
-      const SalesPage = {
-        setup() {
-          const header = reactive({ billNo:'SAL-'+Date.now(), customerId:null, incoterm:'FOB', currency:'USD', port:'Shenzhen ETD', etd:'', paymentTerm:'', freightMode:'SEA', shipMark:'WM/ACME' });
-          const lines = reactive([newSalesLine()]);
-
-          const onCustomerChange = (id) => { const c=store.customers.find(x=>x.id===id); if(!c)return; header.incoterm=c.defaultIncoterm; header.port=c.defaultPort; header.currency=c.currency; header.paymentTerm=c.paymentTerm || ''; };
-          const onProductChange = (line) => {
-            const p=store.products.find(x=>x.id===line.productId); if(!p)return;
-            line.spec=p.spec; line.unit=p.unit; line.unitPrice=p.defaultPrice;
-            line.availableQty = getAvailableQty(p.id);
-          };
-          const refreshAvailable = () => lines.forEach(l => { if(l.productId) l.availableQty = getAvailableQty(l.productId); });
-          const addLine = () => lines.push(newSalesLine());
-          const removeLine = (idx) => { if (lines.length===1) return; lines.splice(idx,1); refreshAvailable(); };
-
-          const save = () => {
-            if(!header.customerId) return ElementPlus.ElMessage.error('请选择客户');
-            const valid = lines.filter(l => l.productId && l.qty > 0);
-            if(!valid.length) return ElementPlus.ElMessage.error('表体至少一行有效商品');
-            for (const l of valid) {
-              const available = getAvailableQty(l.productId);
-              if (l.qty > available) return ElementPlus.ElMessage.error('SKU库存不足，请调整数量');
-            }
-            store.sales.push({ id:Date.now(), ...header, lines: valid.map(v => ({...v, qty:Number(v.qty), unitPrice:Number(v.unitPrice)})), createdAt:new Date().toLocaleString() });
-            ElementPlus.ElMessage.success('销售出库成功');
-            refreshAvailable();
-          };
-
-          const rows = computed(() => store.sales.flatMap(doc => doc.lines.map(l => ({
-            docNo: doc.billNo,
-            customerName: (store.customers.find(c=>c.id===doc.customerId)||{}).name || '-',
-            productName: (store.products.find(p=>p.id===l.productId)||{}).name || '-',
-            qty: l.qty,
-            availableQty: getAvailableQty(l.productId),
-            unitPrice: l.unitPrice,
-            amount: (l.qty*l.unitPrice).toFixed(2),
-            incoterm: doc.incoterm,
-            currency: doc.currency
-          }))));
-
-          return { store, header, lines, onCustomerChange, onProductChange, addLine, removeLine, save, rows, refreshAvailable };
-        },
-        template:`
-          <el-card><div class="sheet-title">销售出库单（多行表体，表体内看库存）</div>
-            <el-descriptions :column="4" border>
-              <el-descriptions-item label="单号">{{header.billNo}}</el-descriptions-item>
-              <el-descriptions-item label="客户"><el-select v-model="header.customerId" @change="onCustomerChange" placeholder="选择客户" style="width:180px"><el-option v-for="c in store.customers" :key="c.id" :label="c.name" :value="c.id" /></el-select></el-descriptions-item>
-              <el-descriptions-item label="贸易条款"><el-input v-model="header.incoterm" /></el-descriptions-item>
-              <el-descriptions-item label="币种"><el-input v-model="header.currency" /></el-descriptions-item>
-              <el-descriptions-item label="港口"><el-input v-model="header.port" /></el-descriptions-item>
-              <el-descriptions-item label="ETD"><el-input v-model="header.etd" placeholder="2026-05-10" /></el-descriptions-item>
-              <el-descriptions-item label="付款条款"><el-input v-model="header.paymentTerm" /></el-descriptions-item>
-              <el-descriptions-item label="运输方式"><el-select v-model="header.freightMode" style="width:120px"><el-option label="SEA" value="SEA" /><el-option label="AIR" value="AIR" /><el-option label="COURIER" value="COURIER" /></el-select></el-descriptions-item>
-            </el-descriptions>
-            <div class="toolbar"><el-input v-model="header.shipMark" style="width:220px" placeholder="唛头/箱唛" /><el-button @click="addLine" type="primary">新增表体行</el-button><el-button type="success" @click="save">保存单据</el-button><el-button @click="refreshAvailable">刷新库存</el-button></div>
-
-            <el-table :data="lines" border class="excel-table">
-              <el-table-column type="index" label="#" width="50" />
-              <el-table-column label="商品"><template #default="scope"><el-select v-model="scope.row.productId" @change="onProductChange(scope.row)" placeholder="选择商品" style="width:100%"><el-option v-for="p in store.products" :key="p.id" :label="p.name" :value="p.id" /></el-select></template></el-table-column>
-              <el-table-column label="规格"><template #default="scope"><el-input v-model="scope.row.spec" readonly /></template></el-table-column>
-              <el-table-column label="单位"><template #default="scope"><el-input v-model="scope.row.unit" readonly /></template></el-table-column>
-              <el-table-column label="可用库存"><template #default="scope"><span :class="scope.row.availableQty > 0 ? 'ok':'warn'">{{ scope.row.availableQty }}</span></template></el-table-column>
-              <el-table-column label="出库数量"><template #default="scope"><el-input-number v-model="scope.row.qty" :min="1" /></template></el-table-column>
-              <el-table-column label="销售单价"><template #default="scope"><el-input-number v-model="scope.row.unitPrice" :min="0" /></template></el-table-column>
-              <el-table-column label="箱号"><template #default="scope"><el-input v-model="scope.row.boxNo" placeholder="BOX-001" /></template></el-table-column>
-              <el-table-column label="备注"><template #default="scope"><el-input v-model="scope.row.remark" /></template></el-table-column>
-              <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger" plain @click="removeLine(scope.$index)">删</el-button></template></el-table-column>
-            </el-table>
-
-            <el-table :data="rows" border size="small" style="margin-top:8px"><el-table-column prop="docNo" label="单号" width="140" /><el-table-column prop="customerName" label="客户" /><el-table-column prop="productName" label="商品" /><el-table-column prop="availableQty" label="可用库存" width="90" /><el-table-column prop="qty" label="数量" width="80" /><el-table-column prop="unitPrice" label="单价" width="90" /><el-table-column prop="amount" label="金额" width="100" /><el-table-column prop="incoterm" label="条款" width="80" /></el-table>
-          </el-card>
-        `
-      };
-
-      const InventoryPage = {
-        setup() {
-          const keyword = ref('');
-          const rows = computed(() => {
-            const k = keyword.value.trim();
-            if(!k) return inventoryRows.value;
-            return inventoryRows.value.filter(x => x.productName.includes(k) || x.sku.includes(k) || x.spec.includes(k));
-          });
-          return { keyword, rows };
-        },
-        template:`
-          <el-card><div class="sheet-title">库存查询（含低库存预警）</div>
-            <el-descriptions :column="2" border><el-descriptions-item label="关键词"><el-input v-model="keyword" placeholder="SKU/商品/规格" /></el-descriptions-item><el-descriptions-item label="记录数">{{rows.length}}</el-descriptions-item></el-descriptions>
-            <el-divider content-position="left">库存表体</el-divider>
-            <el-table :data="rows" border>
-              <el-table-column prop="sku" label="SKU" width="160" /><el-table-column prop="productName" label="商品" /><el-table-column prop="spec" label="规格" /><el-table-column prop="inQty" label="入库" width="80" /><el-table-column prop="outQty" label="出库" width="80" /><el-table-column prop="availableQty" label="可用" width="80" /><el-table-column prop="safetyStock" label="安全库存" width="90" />
-              <el-table-column label="状态" width="100"><template #default="scope"><span :class="scope.row.stockStatus==='低库存'?'warn':'ok'">{{scope.row.stockStatus}}</span></template></el-table-column>
-            </el-table>
-          </el-card>
-        `
-      };
-
-      const CustomsPage = {
-        setup() {
-          const head = reactive({ declarationNo:'CUS-'+Date.now(), port:'Shenzhen', currency:'USD' });
-          const generate = () => {
-            const lines = store.sales.flatMap(doc => doc.lines.map(s => {
-              const p = store.products.find(x => x.id===s.productId) || {};
-              const netWeight = Number((p.unitNetWeight || 0) * s.qty).toFixed(3);
-              const grossWeight = Number((p.unitGrossWeight || 0) * s.qty).toFixed(3);
-              return { sku:p.sku||'-', productName:p.customsName || p.name || '-', hsCode:p.hsCode || '-', originCountry:p.originCountry || 'CN', material:p.material || '-', qty:s.qty, unit:p.unit||'件', netWeight, grossWeight, amount:Number(s.qty*s.unitPrice).toFixed(2) };
-            }));
-            store.customsDeclarations = lines;
-            ElementPlus.ElMessage.success('已按销售单自动汇总报关明细');
-          };
-          const totals = computed(() => ({ amount: store.customsDeclarations.reduce((s,x)=>s+Number(x.amount),0).toFixed(2), net: store.customsDeclarations.reduce((s,x)=>s+Number(x.netWeight),0).toFixed(3), gross: store.customsDeclarations.reduce((s,x)=>s+Number(x.grossWeight),0).toFixed(3) }));
-          return { head, store, generate, totals };
-        },
-        template:`
-          <el-card><div class="sheet-title">报关单模块</div>
-            <el-descriptions :column="3" border><el-descriptions-item label="报关单号">{{head.declarationNo}}</el-descriptions-item><el-descriptions-item label="口岸"><el-input v-model="head.port" /></el-descriptions-item><el-descriptions-item label="币种"><el-input v-model="head.currency" /></el-descriptions-item></el-descriptions>
-            <div class="toolbar"><el-button type="primary" @click="generate">从销售自动生成</el-button><span class="ok">金额 {{totals.amount}}</span><span class="ok">净重 {{totals.net}}kg</span><span class="ok">毛重 {{totals.gross}}kg</span></div>
-            <el-table :data="store.customsDeclarations" border><el-table-column prop="sku" label="SKU" width="160" /><el-table-column prop="productName" label="报关品名" /><el-table-column prop="hsCode" label="HS" width="120" /><el-table-column prop="originCountry" label="原产国" width="80" /><el-table-column prop="material" label="材质" /><el-table-column prop="qty" label="数量" width="80" /><el-table-column prop="netWeight" label="净重kg" width="90" /><el-table-column prop="grossWeight" label="毛重kg" width="90" /><el-table-column prop="amount" label="金额" width="100" /></el-table>
-          </el-card>
-        `
-      };
-
-      const DocumentsPage = {
-        setup() {
-          const header = reactive({ invoiceNo:'INV-'+Date.now(), packingNo:'PL-'+Date.now(), shipDate:new Date().toLocaleDateString(), consignee:'', notifyParty:'', paymentTerm:'T/T 30% + 70%', blNo:'' });
-          const lines = computed(() => store.sales.flatMap(doc => doc.lines.map(s => {
-            const p=store.products.find(x=>x.id===s.productId)||{};
-            const cartonCount = p.cartonQty ? Math.ceil(s.qty / p.cartonQty) : 0;
-            const cbmPerCarton = ((p.cartonL||0)*(p.cartonW||0)*(p.cartonH||0))/1000000;
-            return { sku:p.sku||'-', productName:p.name||'-', qty:s.qty, unit:p.unit||'件', unitPrice:s.unitPrice, amount:(s.qty*s.unitPrice).toFixed(2), cartonCount, totalCbm:(cartonCount*cbmPerCarton).toFixed(3), shipMark:s.boxNo || doc.shipMark || '' };
-          })));
-          const totals = computed(() => ({ amount: lines.value.reduce((s,x)=>s+Number(x.amount),0).toFixed(2), cartons: lines.value.reduce((s,x)=>s+Number(x.cartonCount),0), cbm: lines.value.reduce((s,x)=>s+Number(x.totalCbm),0).toFixed(3) }));
-          return { header, lines, totals };
-        },
-        template:`
-          <el-card><div class="sheet-title">单证中心（商业发票 + 装箱单）</div>
-            <el-descriptions :column="4" border>
-              <el-descriptions-item label="发票号"><el-input v-model="header.invoiceNo" /></el-descriptions-item>
-              <el-descriptions-item label="装箱单号"><el-input v-model="header.packingNo" /></el-descriptions-item>
-              <el-descriptions-item label="出货日期"><el-input v-model="header.shipDate" /></el-descriptions-item>
-              <el-descriptions-item label="提单号"><el-input v-model="header.blNo" /></el-descriptions-item>
-              <el-descriptions-item label="收货人"><el-input v-model="header.consignee" /></el-descriptions-item>
-              <el-descriptions-item label="通知方"><el-input v-model="header.notifyParty" /></el-descriptions-item>
-              <el-descriptions-item label="付款条件"><el-input v-model="header.paymentTerm" /></el-descriptions-item>
-              <el-descriptions-item label="金额合计"><span class="ok">{{totals.amount}}</span></el-descriptions-item>
-            </el-descriptions>
-            <el-divider content-position="left">单证明细表体</el-divider>
-            <el-table :data="lines" border><el-table-column prop="sku" label="SKU" width="160" /><el-table-column prop="productName" label="品名" /><el-table-column prop="qty" label="数量" width="80" /><el-table-column prop="unitPrice" label="单价" width="90" /><el-table-column prop="amount" label="金额" width="100" /><el-table-column prop="cartonCount" label="箱数" width="80" /><el-table-column prop="totalCbm" label="体积CBM" width="100" /><el-table-column prop="shipMark" label="箱唛/唛头" /></el-table>
-            <div class="toolbar"><span class="ok">总箱数 {{totals.cartons}}</span><span class="ok">总体积 {{totals.cbm}} CBM</span></div>
-          </el-card>
-        `
-      };
-
-      const IOToolsPage = {
-        setup() {
-          const downloadTemplate = () => downloadCsv('products_template.csv', ['sku','name','spec','unit','defaultPrice','hsCode','customsName','material','originCountry','brand','season','moq','leadTimeDays','cartonQty','cartonL','cartonW','cartonH','unitNetWeight','unitGrossWeight','safetyStock','exportRebateRate'], []);
-          const importProducts = (file) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const lines = String(reader.result||'').split(/\r?\n/).filter(Boolean); if(lines.length<=1) return ElementPlus.ElMessage.error('CSV无数据');
-              const headers = lines[0].split(',').map(x=>x.trim());
-              const idx = (k)=>headers.indexOf(k);
-              for(let i=1;i<lines.length;i++) {
-                const c = lines[i].split(',');
-                const sku = c[idx('sku')]?.trim();
-                if(!sku) continue;
-                store.products.push({
-                  id:Date.now()+i,
-                  sku,
-                  name:c[idx('name')]?.trim()||'',
-                  spec:c[idx('spec')]?.trim()||'',
-                  unit:c[idx('unit')]?.trim()||'件',
-                  defaultPrice:Number(c[idx('defaultPrice')]||0),
-                  hsCode:c[idx('hsCode')]?.trim()||'',
-                  customsName:c[idx('customsName')]?.trim()||'',
-                  material:c[idx('material')]?.trim()||'',
-                  originCountry:c[idx('originCountry')]?.trim()||'CN',
-                  brand:c[idx('brand')]?.trim()||'',
-                  season:c[idx('season')]?.trim()||'',
-                  moq:Number(c[idx('moq')]||0),
-                  leadTimeDays:Number(c[idx('leadTimeDays')]||0),
-                  cartonQty:Number(c[idx('cartonQty')]||0),
-                  cartonL:Number(c[idx('cartonL')]||0),
-                  cartonW:Number(c[idx('cartonW')]||0),
-                  cartonH:Number(c[idx('cartonH')]||0),
-                  unitNetWeight:Number(c[idx('unitNetWeight')]||0),
-                  unitGrossWeight:Number(c[idx('unitGrossWeight')]||0),
-                  safetyStock:Number(c[idx('safetyStock')]||0),
-                  exportRebateRate:Number(c[idx('exportRebateRate')]||0)
-                });
-              }
-              ElementPlus.ElMessage.success('商品导入完成');
-            };
-            reader.readAsText(file.raw, 'utf-8');
-          };
-          const exportInventory = () => downloadCsv('inventory_export.csv', ['sku','productName','spec','unit','inQty','outQty','availableQty','safetyStock','stockStatus'], inventoryRows.value);
-          const exportCustoms = () => downloadCsv('customs_export.csv', ['sku','productName','hsCode','originCountry','material','qty','unit','netWeight','grossWeight','amount'], store.customsDeclarations);
-          return { downloadTemplate, importProducts, exportInventory, exportCustoms };
-        },
-        template:`
-          <el-card><div class="sheet-title">导入导出中心</div><div class="sheet-note">支持外贸增强字段模板导入/导出。</div>
-            <div class="toolbar"><el-button @click="downloadTemplate">下载商品模板</el-button><el-upload :auto-upload="false" :show-file-list="false" :on-change="importProducts"><el-button type="primary">导入商品CSV</el-button></el-upload><el-button @click="exportInventory">导出库存CSV</el-button><el-button @click="exportCustoms">导出报关CSV</el-button></div>
-          </el-card>
-        `
-      };
-
-      const AnalyticsPage = {
-        setup() { return { kpi, inventoryRows }; },
-        template:`
-          <div>
-            <div class="sheet-title">经营看板</div>
-            <el-row :gutter="12" style="margin-bottom:12px;"><el-col :span="6"><div class="kpi"><h4>采购金额</h4><p>{{kpi.purchaseAmount.toFixed(2)}}</p></div></el-col><el-col :span="6"><div class="kpi"><h4>销售金额</h4><p>{{kpi.salesAmount.toFixed(2)}}</p></div></el-col><el-col :span="6"><div class="kpi"><h4>毛利</h4><p>{{kpi.grossProfit.toFixed(2)}}</p></div></el-col><el-col :span="6"><div class="kpi"><h4>低库存SKU</h4><p>{{kpi.lowStockCount}}</p></div></el-col></el-row>
-            <el-card><el-table :data="inventoryRows" border><el-table-column prop="sku" label="SKU" width="160" /><el-table-column prop="productName" label="商品" /><el-table-column prop="availableQty" label="可用库存" width="100" /><el-table-column prop="safetyStock" label="安全库存" width="100" /><el-table-column prop="stockStatus" label="状态" width="90" /></el-table></el-card>
-          </div>
-        `
-      };
-
-      const routes = [
-        { path:'/', redirect:'/base-data' },
-        { path:'/login', component:LoginPage },
-        { path:'/base-data', component:BaseDataPage },
-        { path:'/purchase', component:PurchasePage },
-        { path:'/sales', component:SalesPage },
-        { path:'/inventory', component:InventoryPage },
-        { path:'/customs', component:CustomsPage },
-        { path:'/documents', component:DocumentsPage },
-        { path:'/io-tools', component:IOToolsPage },
-        { path:'/analytics', component:AnalyticsPage }
-      ];
-
-      const router = createRouter({ history:createWebHashHistory(), routes });
-      ensureLogin(router);
-
-      const App = {
-        setup() {
-          const menus = computed(() => {
-            if(!store.currentUser) return [];
-            const allow = roleAccess[store.currentUser.role] || [];
-            const all = [
-              { path:'/base-data', label:'基础资料' },
-              { path:'/purchase', label:'采购入库' },
-              { path:'/sales', label:'销售出库' },
-              { path:'/inventory', label:'库存查询' },
-              { path:'/customs', label:'报关单' },
-              { path:'/documents', label:'单证中心' },
-              { path:'/io-tools', label:'导入导出' },
-              { path:'/analytics', label:'经营看板' }
-            ];
-            return all.filter(x=>allow.includes(x.path));
-          });
-          const logout = () => { store.currentUser = null; router.push('/login'); };
-          return { store, menus, logout };
-        },
-        template:`
-          <div>
-            <div class="header"><div class="title">外贸 SaaS ERP（进销存+报关+单证）</div><div v-if="store.currentUser">{{store.currentUser.name}} / {{store.currentUser.role}} <el-button size="small" @click="logout">退出</el-button></div></div>
-            <el-container>
-              <el-aside width="230px" style="background:#fff;border-right:1px solid #e5e7eb;" v-if="store.currentUser"><el-menu :default-active="$route.path" router><el-menu-item v-for="m in menus" :key="m.path" :index="m.path">{{m.label}}</el-menu-item></el-menu></el-aside>
-              <el-main class="wrap"><router-view /></el-main>
-            </el-container>
-          </div>
-        `
-      };
-
-      createApp(App).use(router).use(ElementPlus).mount('#app');
-    </script>
-  </body>
+    createApp(App).use(router).use(ElementPlus).mount('#app');
+  </script>
+</body>
 </html>

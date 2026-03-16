@@ -1,70 +1,72 @@
 # wm
 
-外贸 SaaS ERP 原型（进销存 + 报关 + 单证）。
+WM V1：后端 + SQLite 真数据进销存系统。
 
-## 本次重点优化（针对你的反馈）
+## V1 范围
 
-你提出了两个关键问题：
-1) 外贸字段太少；
-2) 采购/销售表体不能只有一行，且销售要在表体里直接看库存。
-
-本次已全部重构完成：
-
-### 1) 外贸字段深度增强
-
-- 商品主数据新增：
-  - SKU、HS Code、报关品名、材质、原产国
-  - 品牌、季节、MOQ、交期天数
-  - 装箱参数（每箱数、长宽高）
-  - 单件净重/毛重、安全库存、退税率
-- 供应商新增：编码、国家、币种、付款条款、税制
-- 客户新增：编码、国家、币种、默认贸易条款、默认港口、付款条款、价格等级
-
-### 2) 采购与销售改为“多行表体”
-
-- 采购单：支持多行商品录入（增行/删行）
-  - 表头：供应商、条款、币种、ETA、港口、付款条款、运输方式
-  - 表体：商品、规格、单位、数量、单价、箱数、备注
-- 销售单：支持多行商品录入（增行/删行）
-  - 表头：客户、条款、币种、港口、ETD、付款条款、运输方式、唛头
-  - 表体：商品、规格、单位、**可用库存**、出库数量、单价、箱号、备注
-  - 下单时逐行校验库存
-
-### 3) 外贸链路扩展功能（继续增强）
-
-- 报关单：按销售数据自动汇总 HS、原产国、材质、毛净重、金额
-- 单证中心：商业发票 + 装箱单汇总（含箱数/CBM/唛头）
-- 导入导出中心：外贸增强字段模板导入/导出
-- 经营看板：采购额、销售额、毛利、低库存 SKU
-
-### 4) 页面样式
-
-- 全部业务页面采用 Excel 风格：**表头 + 表体**。
-
-## SPA 路由
-
-- `/login` 登录
-- `/base-data` 基础资料
-- `/purchase` 采购入库（多行表体）
-- `/sales` 销售出库（多行表体 + 表体库存）
+已启用模块：
+- `/base-data` 基础资料（商品/客户/供应商）
+- `/purchase` 采购入库
+- `/sales` 销售出库
 - `/inventory` 库存查询
-- `/customs` 报关单
-- `/documents` 单证中心
-- `/io-tools` 导入导出
-- `/analytics` 经营看板
 
-## 运行方式
+暂缓模块（页面保留，显示开发中）：
+- `/login`
+- `/customs`
+- `/documents`
+- `/io-tools`
+- `/analytics`
+
+## 后端说明
+
+- 框架：Python `http.server`（无重依赖）
+- 数据库：SQLite（`backend/wm.db`）
+- 库存口径：`inventory_movements` 流水制（真相源）
+  - quantity 一律存正数
+  - 入库类型：`PURCHASE_IN`、`ADJUST_IN`
+  - 出库类型：`SALES_OUT`、`ADJUST_OUT`
+  - 在手库存 = 入库合计 - 出库合计
+
+## 统一返回格式
+
+- 成功：`{"ok": true, "data": ...}`
+- 失败：`{"ok": false, "error": "..."}`
+
+## 本地启动
+
+### 1) 启动后端
 
 ```bash
 cd /workspace/wm
+python3 backend/app/main.py
+```
+
+### 2) 启动前端
+
+```bash
 python3 -m http.server 5500 -d frontend
 ```
 
-浏览器访问：
-
+访问：
 - `http://127.0.0.1:5500/spa.html`
 
-## 技术栈
+## V1 核心 API
 
-- Vue 3 + Vue Router + Element Plus（CDN）
-- reactive store（前端内存态，模拟数据库）
+- 主数据
+  - `GET/POST /api/products`
+  - `GET/PUT /api/products/{id}`
+  - `GET/POST /api/customers`
+  - `GET/PUT /api/customers/{id}`
+  - `GET/POST /api/suppliers`
+  - `GET/PUT /api/suppliers/{id}`
+- 业务
+  - `GET/POST /api/purchases`
+  - `GET/PUT /api/purchases/{id}`
+  - `GET/POST /api/orders`（销售出库语义）
+  - `GET/PUT /api/orders/{id}`
+- 库存
+  - `GET /api/inventory/summary`
+  - `GET /api/inventory/movements`
+  - `POST /api/inventory/adjust`
+- 占位
+  - `GET /api/shipments`（返回空数组）
