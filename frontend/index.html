@@ -3,114 +3,69 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WM 外贸订单库存系统（Excel风格）</title>
+    <title>WM 外贸订单库存系统 MVP</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fb; color:#111827; }
-      .wrap { max-width: 1280px; margin: 20px auto; padding: 0 16px; }
-      h1 { margin: 0 0 6px; }
-      .desc { color:#4b5563; margin-bottom: 12px; }
-      .panel { background:#fff; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); margin-bottom:12px; padding:12px; }
-      .panel h2 { margin:0 0 8px; font-size:18px; }
-      .hint { color:#6b7280; font-size:12px; margin-bottom:8px; }
-      table { width:100%; border-collapse:collapse; font-size:13px; }
-      th, td { border:1px solid #e5e7eb; padding:6px; vertical-align:top; }
-      th { background:#f3f4f6; text-align:left; }
-      input, textarea { width:100%; box-sizing:border-box; padding:6px; border:1px solid #d1d5db; border-radius:4px; }
-      textarea { min-height:48px; }
-      .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-      button { background:#2563eb; color:#fff; border:0; border-radius:6px; padding:8px 12px; cursor:pointer; }
-      button.secondary { background:#6b7280; }
-      .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-      pre { background:#111827; color:#e5e7eb; padding:10px; border-radius:6px; min-height:90px; overflow:auto; }
-      @media (max-width: 960px) { .grid2 { grid-template-columns:1fr; } }
+      body { font-family: Arial, sans-serif; margin: 0; background: #f6f8fb; }
+      .wrap { max-width: 1000px; margin: 24px auto; padding: 0 16px; }
+      h1 { margin-bottom: 6px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); gap: 12px; }
+      .card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+      input, textarea, button { width: 100%; padding: 8px; margin-top: 6px; box-sizing: border-box; }
+      button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+      pre { background: #111827; color: #e5e7eb; padding: 10px; border-radius: 6px; overflow: auto; min-height: 72px; }
+      .hint { color: #6b7280; font-size: 12px; }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <h1>外贸订单库存系统（Excel风格录入）</h1>
-      <div class="desc">每个功能都是一个独立“表格”，按行填写，和 Excel 习惯一致。先点“载入示例数据”，再逐步提交。</div>
+      <h1>外贸订单库存系统（MVP）</h1>
+      <p>支持：商品建档、入库、下单、按箱码发货、库存与剩余查看。</p>
 
-      <div class="panel">
-        <h2>1) 商品资料表（Product Master）</h2>
-        <div class="hint">必填：SKU、类别、颜色、尺寸、装箱数量、箱规、毛重净重、HS、报关中文名。</div>
-        <table>
-          <thead>
-            <tr>
-              <th>商品编码 SKU</th><th>商品类别</th><th>类别HS码</th><th>颜色</th><th>尺寸</th>
-              <th>装箱数量</th><th>箱长cm</th><th>箱宽cm</th><th>箱高cm</th>
-              <th>毛重kg</th><th>净重kg</th><th>客户HS码</th><th>报关中文名称</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><input id="p_sku" /></td><td><input id="p_category" /></td><td><input id="p_cat_hs" /></td><td><input id="p_color" /></td><td><input id="p_size" /></td>
-              <td><input id="p_pack" type="number" /></td><td><input id="p_len" type="number" step="0.01" /></td><td><input id="p_wid" type="number" step="0.01" /></td><td><input id="p_hei" type="number" step="0.01" /></td>
-              <td><input id="p_gross" type="number" step="0.01" /></td><td><input id="p_net" type="number" step="0.01" /></td><td><input id="p_customer_hs" /></td><td><input id="p_cn" /></td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="actions">
-          <button onclick="fillProductExample()" class="secondary">载入示例行</button>
+      <div class="grid">
+        <section class="card">
+          <h3>1) 新建商品</h3>
+          <input id="p_sku" placeholder="SKU，例如 SKU-RED-M" />
+          <input id="p_category" placeholder="类别名称，例如 T恤" />
+          <input id="p_cat_hs" placeholder="类别HS码，例如 610910" />
+          <input id="p_color" placeholder="颜色" />
+          <input id="p_size" placeholder="尺寸" />
           <button onclick="createProduct()">提交商品</button>
-          <button onclick="refreshProducts()" class="secondary">刷新商品列表</button>
-        </div>
-        <div id="productsTable"></div>
+        </section>
+
+        <section class="card">
+          <h3>2) 入库</h3>
+          <input id="r_sku" placeholder="SKU" />
+          <input id="r_qty" placeholder="数量" type="number" />
+          <input id="r_ref" placeholder="参考单号" value="GRN-001" />
+          <button onclick="receiveStock()">提交入库</button>
+        </section>
+
+        <section class="card">
+          <h3>3) 创建订单</h3>
+          <input id="o_customer" placeholder="客户名" value="ACME LTD" />
+          <input id="o_po" placeholder="客户PO" value="PO-2026-001" />
+          <textarea id="o_lines" rows="4" placeholder='订单行(JSON): [{"sku":"SKU-RED-M","qty":100}]'></textarea>
+          <button onclick="createOrder()">提交订单</button>
+        </section>
+
+        <section class="card">
+          <h3>4) 按箱码发货</h3>
+          <input id="s_order_id" placeholder="订单ID" type="number" />
+          <input id="s_no" placeholder="发货单号" value="SHIP-001" />
+          <textarea id="s_boxes" rows="6" placeholder='箱明细(JSON): [{"box_code":"BOX-001","gross_weight_kg":12,"net_weight_kg":10,"volume_cbm":0.07,"items":[{"sku":"SKU-RED-M","qty":50}]}]'></textarea>
+          <button onclick="createShipment()">提交发货</button>
+          <p class="hint">每个 box_code 必须唯一；重量来自箱明细。</p>
+        </section>
+
+        <section class="card">
+          <h3>5) 查库存与剩余</h3>
+          <input id="q_sku" placeholder="SKU" />
+          <button onclick="queryInventory()">查询</button>
+        </section>
       </div>
 
-      <div class="grid2">
-        <div class="panel">
-          <h2>2) 入库表（Receipt）</h2>
-          <table>
-            <thead><tr><th>SKU</th><th>入库数量</th><th>参考单号</th></tr></thead>
-            <tbody><tr><td><input id="r_sku" /></td><td><input id="r_qty" type="number" /></td><td><input id="r_ref" /></td></tr></tbody>
-          </table>
-          <div class="actions"><button onclick="fillReceiptExample()" class="secondary">载入示例</button><button onclick="receiveStock()">提交入库</button></div>
-        </div>
-
-        <div class="panel">
-          <h2>3) 订单表（Sales Order）</h2>
-          <table>
-            <thead><tr><th>客户名</th><th>客户PO</th><th>订单行(每行: SKU,数量)</th></tr></thead>
-            <tbody><tr><td><input id="o_customer" /></td><td><input id="o_po" /></td><td><textarea id="o_lines" placeholder="SKU-RED-M,100\nSKU-BLUE-L,50"></textarea></td></tr></tbody>
-          </table>
-          <div class="actions"><button onclick="fillOrderExample()" class="secondary">载入示例</button><button onclick="createOrder()">提交订单</button><button onclick="refreshOrders()" class="secondary">刷新订单列表</button></div>
-          <div id="ordersTable"></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>4) 发货装箱表（Shipment + Boxes）</h2>
-        <div class="hint">箱明细填写格式（每行）：箱码,毛重,净重,体积,SKU,数量</div>
-        <table>
-          <thead><tr><th>订单ID</th><th>发货单号</th><th>箱明细（多行）</th></tr></thead>
-          <tbody><tr><td><input id="s_order_id" type="number" /></td><td><input id="s_no" /></td><td><textarea id="s_boxes" placeholder="BOX-001,12,10,0.07,SKU-RED-M,50"></textarea></td></tr></tbody>
-        </table>
-        <div class="actions"><button onclick="fillShipmentExample()" class="secondary">载入示例</button><button onclick="createShipment()">提交发货</button><button onclick="refreshShipments()" class="secondary">刷新发货列表</button></div>
-        <div id="shipmentsTable"></div>
-      </div>
-
-      <div class="grid2">
-        <div class="panel">
-          <h2>5) 库存查询表（Inventory）</h2>
-          <table><thead><tr><th>SKU</th></tr></thead><tbody><tr><td><input id="q_sku" /></td></tr></tbody></table>
-          <div class="actions"><button onclick="queryInventory()">查询库存与剩余</button></div>
-        </div>
-
-        <div class="panel">
-          <h2>6) 下一步功能（已开始）</h2>
-          <ul>
-            <li>✅ 订单列表接口</li>
-            <li>✅ 发货列表接口（含箱数/总重）</li>
-            <li>✅ 发货详情接口（箱明细+箱内商品）</li>
-            <li>➡️ 下步建议：报关单汇总、导出 Excel、权限角色</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>返回结果</h2>
-        <pre id="result">等待操作...</pre>
-      </div>
+      <h3>响应结果</h3>
+      <pre id="result">等待操作...</pre>
     </div>
 
     <script src="./app.js"></script>

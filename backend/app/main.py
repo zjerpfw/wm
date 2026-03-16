@@ -171,54 +171,6 @@ class AppHandler(BaseHTTPRequestHandler):
                     rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
                 return self._json(200, [dict(r) for r in rows])
 
-
-            if path == "/api/orders":
-                with closing(get_conn()) as conn:
-                    rows = conn.execute(
-                        "SELECT id, customer_name, customer_po, created_at FROM sales_orders ORDER BY id DESC"
-                    ).fetchall()
-                return self._json(200, [dict(r) for r in rows])
-
-            if path == "/api/shipments":
-                with closing(get_conn()) as conn:
-                    rows = conn.execute(
-                        """
-                        SELECT s.id, s.shipment_no, s.order_id, s.created_at,
-                               COALESCE(SUM(b.gross_weight_kg), 0) AS total_gross_weight_kg,
-                               COALESCE(SUM(b.net_weight_kg), 0) AS total_net_weight_kg,
-                               COUNT(b.id) AS box_count
-                        FROM shipments s
-                        LEFT JOIN shipment_boxes b ON b.shipment_id = s.id
-                        GROUP BY s.id
-                        ORDER BY s.id DESC
-                        """
-                    ).fetchall()
-                return self._json(200, [dict(r) for r in rows])
-
-            if path.startswith("/api/shipments/"):
-                shipment_id = int(path.split("/")[-1])
-                with closing(get_conn()) as conn:
-                    shipment = conn.execute(
-                        "SELECT id, order_id, shipment_no, created_at FROM shipments WHERE id = ?",
-                        (shipment_id,),
-                    ).fetchone()
-                    if not shipment:
-                        return self._json(404, {"detail": "发货单不存在"})
-                    boxes = conn.execute(
-                        "SELECT id, box_code, gross_weight_kg, net_weight_kg, volume_cbm FROM shipment_boxes WHERE shipment_id = ? ORDER BY id",
-                        (shipment_id,),
-                    ).fetchall()
-
-                    box_items: list[dict[str, Any]] = []
-                    for b in boxes:
-                        items = conn.execute(
-                            "SELECT sku, qty FROM shipment_box_items WHERE box_id = ? ORDER BY id",
-                            (b["id"],),
-                        ).fetchall()
-                        box_items.append({**dict(b), "items": [dict(i) for i in items]})
-
-                return self._json(200, {"shipment": dict(shipment), "boxes": box_items})
-
             if path.startswith("/api/orders/"):
                 order_id = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
