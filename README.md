@@ -2,71 +2,54 @@
 
 WM V1：后端 + SQLite 真数据进销存系统。
 
-## V1 范围
+## V1.0.1（稳定收口）
 
-已启用模块：
-- `/base-data` 基础资料（商品/客户/供应商）
-- `/purchase` 采购入库
-- `/sales` 销售出库
-- `/inventory` 库存查询
+本阶段完成：
+- 唯一性校验：商品编码、客户编码、供应商编码、采购单号、销售单号。
+- 数值校验：数量必须大于 0，单价不能为负数。
+- 编辑能力：商品/客户/供应商支持编辑。
+- 单据状态：采购单、销售单支持 `DRAFT` / `SAVED` / `VOIDED`。
+- 列表筛选：基础资料、采购单、销售单、库存支持按关键字段搜索。
+- 库存页增强：入库总量、出库总量、当前库存、安全库存、低库存状态。
+- 错误提示统一中文。
 
-暂缓模块（页面保留，显示开发中）：
-- `/login`
-- `/customs`
-- `/documents`
-- `/io-tools`
-- `/analytics`
+> 说明：退货场景（采购退货/销售退货）将在后续按“单据类型决定库存增减方向”扩展。
 
-## 后端说明
+## 数据库位置与备份
 
-- 框架：Python `http.server`（无重依赖）
-- 数据库：SQLite（`backend/wm.db`）
-- 库存口径：`inventory_movements` 流水制（真相源）
-  - quantity 一律存正数
-  - 入库类型：`PURCHASE_IN`、`ADJUST_IN`
-  - 出库类型：`SALES_OUT`、`ADJUST_OUT`
-  - 在手库存 = 入库合计 - 出库合计
+- SQLite 文件默认路径：`backend/wm.db`。
+- 建议备份方式（先停服务再复制文件）：
 
-## 统一返回格式
+```bash
+cp backend/wm.db backend/wm.db.bak.$(date +%Y%m%d_%H%M%S)
+```
 
-- 成功：`{"ok": true, "data": ...}`
-- 失败：`{"ok": false, "error": "..."}`
-
-## 本地启动
-
-### 1) 启动后端
+## 最短启动步骤
 
 ```bash
 cd /workspace/wm
 python3 backend/app/main.py
-```
-
-### 2) 启动前端
-
-```bash
 python3 -m http.server 5500 -d frontend
 ```
 
-访问：
+浏览器访问：
 - `http://127.0.0.1:5500/spa.html`
 
-## V1 核心 API
+## API 概览
 
-- 主数据
+- 主数据：
   - `GET/POST /api/products`
-  - `GET/PUT /api/products/{id}`
+  - `PUT /api/products/{id}`
   - `GET/POST /api/customers`
-  - `GET/PUT /api/customers/{id}`
+  - `PUT /api/customers/{id}`
   - `GET/POST /api/suppliers`
-  - `GET/PUT /api/suppliers/{id}`
-- 业务
+  - `PUT /api/suppliers/{id}`
+- 业务单据：
   - `GET/POST /api/purchases`
-  - `GET/PUT /api/purchases/{id}`
-  - `GET/POST /api/orders`（销售出库语义）
-  - `GET/PUT /api/orders/{id}`
-- 库存
+  - `PUT /api/purchases/{id}`
+  - `GET/POST /api/orders`
+  - `PUT /api/orders/{id}`
+- 库存：
   - `GET /api/inventory/summary`
   - `GET /api/inventory/movements`
   - `POST /api/inventory/adjust`
-- 占位
-  - `GET /api/shipments`（返回空数组）
