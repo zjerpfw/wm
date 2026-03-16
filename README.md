@@ -1,17 +1,17 @@
 # wm
 
-外贸订单与库存系统 MVP（前后端项目示例）。
+外贸订单与库存系统 MVP（前后端项目示例，**零外网依赖可运行版**）。
 
-## 技术选型建议（结合你的业务）
+## 技术选型建议（当前可直接运行）
 
-- **后端语言：Python（FastAPI）**
-  - 适合快速实现订单、库存、报关规则；开发效率高。
+- **后端语言：Python（标准库 HTTP Server）**
+  - 无需安装 FastAPI / 第三方依赖，受限网络也可直接启动。
 - **前端语言：JavaScript（原生 HTML + JS）**
-  - 先快速验证流程，后续可升级到 Vue/React。
-- **数据库：SQLite（MVP）**
+  - 快速验证业务流程，后续可升级到 Vue/React。
+- **数据库：SQLite**
   - 单机快速落地，后续可迁移到 MySQL/PostgreSQL。
 
-> 如果你要长期在外贸企业使用，推荐后续演进为：`Vue/React + FastAPI/Java Spring + MySQL/PostgreSQL`。
+> 如果你后续网络环境放开，可再升级到 `FastAPI + Vue/React` 结构。
 
 ---
 
@@ -44,37 +44,36 @@ wm/
 
 ---
 
-## 本地运行
+## 本地运行（无需 pip install）
 
 ### 1) 启动后端
 
 ```bash
 cd /workspace/wm
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+python3 backend/app/main.py
 ```
 
+默认监听：
+- `http://127.0.0.1:8000`
+
 ### 2) 打开前端
-
-直接打开文件：
-
-- `frontend/index.html`
-
-或使用静态服务：
 
 ```bash
 python3 -m http.server 5500 -d frontend
 ```
 
-然后访问：
-
+访问：
 - `http://127.0.0.1:5500`
 
 ---
 
 ## API 快速示例
+
+### 健康检查
+
+```bash
+curl http://127.0.0.1:8000/health
+```
 
 ### 新建商品
 
