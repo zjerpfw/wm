@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>简易进销存 SaaS ERP 原型 (Vue + Element Plus)</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <style>
+      body { margin: 0; background: #f5f7fb; }
+      .app-wrap { min-height: 100vh; }
+      .header { background: #1f2937; color: #fff; padding: 12px 20px; font-size: 18px; }
+      .content { padding: 16px; }
+      .card { margin-bottom: 16px; }
+      .muted { color: #6b7280; font-size: 12px; }
+      .amount { font-weight: 600; color: #2563eb; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
+    <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+    <script>
+      const { createApp, reactive, computed, ref } = Vue;
+      const { createRouter, createWebHashHistory, RouterView, RouterLink } = VueRouter;
+
+      // ===== 状态管理（模拟数据库） =====
+      const store = reactive({
+        products: [
+          { id: 1, name: '针织T恤', spec: 'M/红色', unit: '件', defaultPrice: 35 },
+          { id: 2, name: '牛仔裤', spec: '32码/蓝色', unit: '条', defaultPrice: 68 }
+        ],
+        suppliers: [
+          { id: 1, name: '广州成衣供应商', contact: '张先生', phone: '13800001111' },
+          { id: 2, name: '深圳面料供应商', contact: '李女士', phone: '13900002222' }
+        ],
+        purchases: [], // {id, productId, supplierId, qty, unitPrice, createdAt}
+        sales: [] // {id, productId, customerName, qty, unitPrice, createdAt}
+      });
+
+      const inventoryRows = computed(() => {
+        return store.products.map((p) => {
+          const inQty = store.purchases.filter(x => x.productId === p.id).reduce((s, x) => s + x.qty, 0);
+          const outQty = store.sales.filter(x => x.productId === p.id).reduce((s, x) => s + x.qty, 0);
+          return {
+            productId: p.id,
+            productName: p.name,
+            spec: p.spec,
+            unit: p.unit,
+            inQty,
+            outQty,
+            availableQty: inQty - outQty
+          };
+        });
+      });
+
+      // ===== 页面1：基础资料 =====
+      const BaseDataPage = {
+        setup() {
+          const productForm = reactive({ name: '', spec: '', unit: '件', defaultPrice: 0 });
+          const supplierForm = reactive({ name: '', contact: '', phone: '' });
+
+          const addProduct = () => {
+            if (!productForm.name || !productForm.spec || !productForm.unit) {
+              ElementPlus.ElMessage.error('请完整填写商品信息');
+              return;
+            }
+            store.products.push({
+              id: Date.now(),
+              name: productForm.name,
+              spec: productForm.spec,
+              unit: productForm.unit,
+              defaultPrice: Number(productForm.defaultPrice || 0)
+            });
+            Object.assign(productForm, { name: '', spec: '', unit: '件', defaultPrice: 0 });
+            ElementPlus.ElMessage.success('商品已新增');
+          };
+
+          const addSupplier = () => {
+            if (!supplierForm.name) {
+              ElementPlus.ElMessage.error('供应商名称必填');
+              return;
+            }
+            store.suppliers.push({
+              id: Date.now(),
+              name: supplierForm.name,
+              contact: supplierForm.contact,
+              phone: supplierForm.phone
+            });
+            Object.assign(supplierForm, { name: '', contact: '', phone: '' });
+            ElementPlus.ElMessage.success('供应商已新增');
+          };
+
+          return { store, productForm, supplierForm, addProduct, addSupplier };
+        },
+        template: `
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-card class="card" header="Products 基础资料">
+                <el-form label-width="88px">
+                  <el-form-item label="商品名称"><el-input v-model="productForm.name" /></el-form-item>
+                  <el-form-item label="规格"><el-input v-model="productForm.spec" /></el-form-item>
+                  <el-form-item label="单位"><el-input v-model="productForm.unit" /></el-form-item>
+                  <el-form-item label="默认单价"><el-input-number v-model="productForm.defaultPrice" :min="0" /></el-form-item>
+                  <el-button type="primary" @click="addProduct">新增商品</el-button>
+                </el-form>
+                <el-divider />
+                <el-table :data="store.products" size="small">
+                  <el-table-column prop="id" label="ID" width="90" />
+                  <el-table-column prop="name" label="名称" />
+                  <el-table-column prop="spec" label="规格" />
+                  <el-table-column prop="unit" label="单位" width="80" />
+                  <el-table-column prop="defaultPrice" label="默认单价" width="100" />
+                </el-table>
+              </el-card>
+            </el-col>
+
+            <el-col :span="12">
+              <el-card class="card" header="Suppliers 基础资料">
+                <el-form label-width="88px">
+                  <el-form-item label="供应商名称"><el-input v-model="supplierForm.name" /></el-form-item>
+                  <el-form-item label="联系人"><el-input v-model="supplierForm.contact" /></el-form-item>
+                  <el-form-item label="电话"><el-input v-model="supplierForm.phone" /></el-form-item>
+                  <el-button type="primary" @click="addSupplier">新增供应商</el-button>
+                </el-form>
+                <el-divider />
+                <el-table :data="store.suppliers" size="small">
+                  <el-table-column prop="id" label="ID" width="90" />
+                  <el-table-column prop="name" label="供应商" />
+                  <el-table-column prop="contact" label="联系人" />
+                  <el-table-column prop="phone" label="电话" />
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+        `
+      };
+
+      // ===== 页面2：采购入库 =====
+      const PurchasePage = {
+        setup() {
+          const form = reactive({ productId: null, supplierId: null, spec: '', unit: '', qty: 1, unitPrice: 0 });
+
+          const selectedProduct = computed(() => store.products.find(p => p.id === form.productId) || null);
+
+          const onProductChange = (id) => {
+            const p = store.products.find(x => x.id === id);
+            if (!p) return;
+            form.spec = p.spec;       // 联动带出规格
+            form.unit = p.unit;       // 联动带出单位
+            form.unitPrice = p.defaultPrice;
+          };
+
+          const submitPurchase = () => {
+            if (!form.productId || !form.supplierId || !form.qty) {
+              ElementPlus.ElMessage.error('请先选择商品、供应商并填写数量');
+              return;
+            }
+            store.purchases.push({
+              id: Date.now(),
+              productId: form.productId,
+              supplierId: form.supplierId,
+              qty: Number(form.qty),
+              unitPrice: Number(form.unitPrice || 0),
+              createdAt: new Date().toLocaleString()
+            });
+            ElementPlus.ElMessage.success('采购入库成功');
+            form.qty = 1;
+          };
+
+          const purchaseRows = computed(() => {
+            return store.purchases.map(x => ({
+              ...x,
+              productName: (store.products.find(p => p.id === x.productId) || {}).name || '-',
+              supplierName: (store.suppliers.find(s => s.id === x.supplierId) || {}).name || '-',
+              amount: (x.qty * x.unitPrice).toFixed(2)
+            }));
+          });
+
+          return { store, form, selectedProduct, onProductChange, submitPurchase, purchaseRows };
+        },
+        template: `
+          <el-card class="card" header="采购入库（联动基础资料）">
+            <el-row :gutter="16">
+              <el-col :span="8">
+                <el-form label-width="90px">
+                  <el-form-item label="选择商品">
+                    <el-select v-model="form.productId" placeholder="请选择商品" @change="onProductChange" style="width:100%">
+                      <el-option v-for="p in store.products" :key="p.id" :label="p.name" :value="p.id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="规格">
+                    <el-input v-model="form.spec" readonly />
+                  </el-form-item>
+                  <el-form-item label="单位">
+                    <el-input v-model="form.unit" readonly />
+                  </el-form-item>
+                </el-form>
+              </el-col>
+              <el-col :span="8">
+                <el-form label-width="90px">
+                  <el-form-item label="供应商">
+                    <el-select v-model="form.supplierId" placeholder="请选择供应商" style="width:100%">
+                      <el-option v-for="s in store.suppliers" :key="s.id" :label="s.name" :value="s.id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="数量">
+                    <el-input-number v-model="form.qty" :min="1" />
+                  </el-form-item>
+                  <el-form-item label="采购单价">
+                    <el-input-number v-model="form.unitPrice" :min="0" />
+                  </el-form-item>
+                  <el-button type="primary" @click="submitPurchase">确认入库</el-button>
+                </el-form>
+              </el-col>
+              <el-col :span="8">
+                <el-alert title="联动规则" type="info" :closable="false">
+                  <template #default>
+                    1) 选择商品后自动带出规格与单位。<br>
+                    2) 数量手工录入。<br>
+                    3) 单价默认取商品默认单价，可手改。
+                  </template>
+                </el-alert>
+              </el-col>
+            </el-row>
+            <el-divider />
+            <el-table :data="purchaseRows" size="small">
+              <el-table-column prop="id" label="单据ID" width="100" />
+              <el-table-column prop="productName" label="商品" />
+              <el-table-column prop="supplierName" label="供应商" />
+              <el-table-column prop="qty" label="数量" width="80" />
+              <el-table-column prop="unitPrice" label="单价" width="100" />
+              <el-table-column prop="amount" label="金额" width="100" />
+              <el-table-column prop="createdAt" label="时间" width="180" />
+            </el-table>
+          </el-card>
+        `
+      };
+
+      // ===== 页面3：销售出库 =====
+      const SalesPage = {
+        setup() {
+          const form = reactive({ productId: null, customerName: '', qty: 1, unitPrice: 0 });
+
+          const onProductChange = (id) => {
+            const p = store.products.find(x => x.id === id);
+            if (p) form.unitPrice = p.defaultPrice;
+          };
+
+          const availableQty = computed(() => {
+            if (!form.productId) return 0;
+            const row = inventoryRows.value.find(r => r.productId === form.productId);
+            return row ? row.availableQty : 0;
+          });
+
+          const submitSales = () => {
+            if (!form.productId || !form.customerName || !form.qty) {
+              ElementPlus.ElMessage.error('请填写完整销售信息');
+              return;
+            }
+            if (form.qty > availableQty.value) {
+              ElementPlus.ElMessage.error('库存不足，不能出库');
+              return;
+            }
+            store.sales.push({
+              id: Date.now(),
+              productId: form.productId,
+              customerName: form.customerName,
+              qty: Number(form.qty),
+              unitPrice: Number(form.unitPrice || 0),
+              createdAt: new Date().toLocaleString()
+            });
+            ElementPlus.ElMessage.success('销售出库成功');
+            form.qty = 1;
+          };
+
+          const salesRows = computed(() => {
+            return store.sales.map(x => ({
+              ...x,
+              productName: (store.products.find(p => p.id === x.productId) || {}).name || '-',
+              amount: (x.qty * x.unitPrice).toFixed(2)
+            }));
+          });
+
+          return { store, form, onProductChange, submitSales, salesRows, availableQty };
+        },
+        template: `
+          <el-card class="card" header="销售出库">
+            <el-form inline>
+              <el-form-item label="商品">
+                <el-select v-model="form.productId" placeholder="请选择商品" @change="onProductChange" style="width:220px">
+                  <el-option v-for="p in store.products" :key="p.id" :label="p.name" :value="p.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="客户名称">
+                <el-input v-model="form.customerName" style="width:180px" />
+              </el-form-item>
+              <el-form-item label="可用库存">
+                <span class="amount">{{ availableQty }}</span>
+              </el-form-item>
+              <el-form-item label="数量">
+                <el-input-number v-model="form.qty" :min="1" />
+              </el-form-item>
+              <el-form-item label="销售单价">
+                <el-input-number v-model="form.unitPrice" :min="0" />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="submitSales">确认出库</el-button>
+              </el-form-item>
+            </el-form>
+            <el-table :data="salesRows" size="small">
+              <el-table-column prop="id" label="单据ID" width="100" />
+              <el-table-column prop="productName" label="商品" />
+              <el-table-column prop="customerName" label="客户" />
+              <el-table-column prop="qty" label="数量" width="80" />
+              <el-table-column prop="unitPrice" label="单价" width="100" />
+              <el-table-column prop="amount" label="金额" width="100" />
+              <el-table-column prop="createdAt" label="时间" width="180" />
+            </el-table>
+          </el-card>
+        `
+      };
+
+      // ===== 页面4：库存查询 =====
+      const InventoryPage = {
+        setup() {
+          const keyword = ref('');
+          const rows = computed(() => {
+            const k = keyword.value.trim();
+            if (!k) return inventoryRows.value;
+            return inventoryRows.value.filter(r => r.productName.includes(k) || r.spec.includes(k));
+          });
+          return { keyword, rows };
+        },
+        template: `
+          <el-card class="card" header="库存查询">
+            <el-input v-model="keyword" placeholder="输入商品名/规格过滤" style="width:300px; margin-bottom:12px;" />
+            <el-table :data="rows" size="small">
+              <el-table-column prop="productId" label="商品ID" width="90" />
+              <el-table-column prop="productName" label="商品名称" />
+              <el-table-column prop="spec" label="规格" />
+              <el-table-column prop="unit" label="单位" width="80" />
+              <el-table-column prop="inQty" label="采购入库" width="100" />
+              <el-table-column prop="outQty" label="销售出库" width="100" />
+              <el-table-column prop="availableQty" label="可用库存" width="100" />
+            </el-table>
+          </el-card>
+        `
+      };
+
+      // ===== 路由 =====
+      const routes = [
+        { path: '/', redirect: '/base-data' },
+        { path: '/base-data', component: BaseDataPage },
+        { path: '/purchase', component: PurchasePage },
+        { path: '/sales', component: SalesPage },
+        { path: '/inventory', component: InventoryPage }
+      ];
+
+      const router = createRouter({ history: createWebHashHistory(), routes });
+
+      // ===== 根布局 =====
+      const App = {
+        components: { RouterView, RouterLink },
+        template: `
+          <div class="app-wrap">
+            <div class="header">简易进销存 SaaS ERP 原型（Vue + Element Plus）</div>
+            <el-container>
+              <el-aside width="220px" style="background:#fff; border-right:1px solid #e5e7eb;">
+                <el-menu :default-active="$route.path" router>
+                  <el-menu-item index="/base-data">基础资料</el-menu-item>
+                  <el-menu-item index="/purchase">采购入库</el-menu-item>
+                  <el-menu-item index="/sales">销售出库</el-menu-item>
+                  <el-menu-item index="/inventory">库存查询</el-menu-item>
+                </el-menu>
+              </el-aside>
+              <el-main class="content">
+                <router-view />
+              </el-main>
+            </el-container>
+          </div>
+        `
+      };
+
+      createApp(App).use(router).use(ElementPlus).mount('#app');
+    </script>
+  </body>
+</html>
