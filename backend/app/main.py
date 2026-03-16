@@ -7,7 +7,11 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, urlparse
+
+
+def now_iso() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds")
 
 
 def resolve_db_path() -> Path:
@@ -31,144 +35,180 @@ def init_db() -> None:
     with closing(get_conn()) as conn:
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS customers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_code TEXT NOT NULL UNIQUE,
-                customer_name TEXT NOT NULL UNIQUE,
-                currency TEXT NOT NULL DEFAULT 'USD',
-                country TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sku TEXT NOT NULL UNIQUE,
-                category_name TEXT NOT NULL,
-                category_hs_code TEXT NOT NULL,
-                color TEXT NOT NULL,
-                size TEXT NOT NULL,
-                default_packing_qty INTEGER NOT NULL,
-                carton_length_cm REAL NOT NULL,
-                carton_width_cm REAL NOT NULL,
-                carton_height_cm REAL NOT NULL,
-                standard_gross_weight_kg REAL NOT NULL,
-                standard_net_weight_kg REAL NOT NULL,
-                customer_hs_code TEXT NOT NULL,
-                customs_cn_name TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS inventory_balances (
-                sku TEXT PRIMARY KEY,
-                on_hand_qty INTEGER NOT NULL DEFAULT 0,
-                shipped_qty INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (sku) REFERENCES products(sku)
-            );
-
-            CREATE TABLE IF NOT EXISTS inventory_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sku TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                qty_change INTEGER NOT NULL,
-                reference_no TEXT NOT NULL,
+                product_code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                spec TEXT NOT NULL DEFAULT '',
+                unit TEXT NOT NULL DEFAULT 'PCS',
+                hs_code TEXT NOT NULL DEFAULT '',
+                customs_name TEXT NOT NULL DEFAULT '',
+                material TEXT NOT NULL DEFAULT '',
+                origin_country TEXT NOT NULL DEFAULT 'CN',
+                qty_per_carton INTEGER NOT NULL DEFAULT 0,
+                carton_length REAL NOT NULL DEFAULT 0,
+                carton_width REAL NOT NULL DEFAULT 0,
+                carton_height REAL NOT NULL DEFAULT 0,
+                net_weight REAL NOT NULL DEFAULT 0,
+                gross_weight REAL NOT NULL DEFAULT 0,
+                safety_stock REAL NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (sku) REFERENCES products(sku)
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                country TEXT NOT NULL DEFAULT '',
+                currency TEXT NOT NULL DEFAULT 'USD',
+                trade_term TEXT NOT NULL DEFAULT '',
+                default_port TEXT NOT NULL DEFAULT '',
+                payment_term TEXT NOT NULL DEFAULT '',
+                contact TEXT NOT NULL DEFAULT '',
+                phone TEXT NOT NULL DEFAULT '',
+                email TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS suppliers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                country TEXT NOT NULL DEFAULT '',
+                currency TEXT NOT NULL DEFAULT 'USD',
+                payment_term TEXT NOT NULL DEFAULT '',
+                tax_scheme TEXT NOT NULL DEFAULT '',
+                contact TEXT NOT NULL DEFAULT '',
+                phone TEXT NOT NULL DEFAULT '',
+                email TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS purchase_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchase_no TEXT NOT NULL UNIQUE,
+                supplier_id INTEGER NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                eta TEXT NOT NULL DEFAULT '',
+                port TEXT NOT NULL DEFAULT '',
+                payment_term TEXT NOT NULL DEFAULT '',
+                transport_mode TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'CONFIRMED',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS purchase_order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchase_order_id INTEGER NOT NULL,
+                product_id INTEGER NOT NULL,
+                spec_snapshot TEXT NOT NULL DEFAULT '',
+                unit TEXT NOT NULL DEFAULT 'PCS',
+                quantity REAL NOT NULL,
+                unit_price REAL NOT NULL DEFAULT 0,
+                carton_count REAL NOT NULL DEFAULT 0,
+                line_note TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id),
+                FOREIGN KEY (product_id) REFERENCES products(id)
             );
 
             CREATE TABLE IF NOT EXISTS sales_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id INTEGER,
-                customer_name TEXT NOT NULL,
-                customer_po TEXT NOT NULL,
+                sales_no TEXT NOT NULL UNIQUE,
+                customer_id INTEGER NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                port TEXT NOT NULL DEFAULT '',
+                etd TEXT NOT NULL DEFAULT '',
+                payment_term TEXT NOT NULL DEFAULT '',
+                transport_mode TEXT NOT NULL DEFAULT '',
+                shipping_mark TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'CONFIRMED',
+                note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (customer_id) REFERENCES customers(id)
             );
 
-            CREATE TABLE IF NOT EXISTS sales_order_lines (
+            CREATE TABLE IF NOT EXISTS sales_order_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id INTEGER NOT NULL,
-                sku TEXT NOT NULL,
-                ordered_qty INTEGER NOT NULL,
-                shipped_qty INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (order_id) REFERENCES sales_orders(id),
-                FOREIGN KEY (sku) REFERENCES products(sku)
+                sales_order_id INTEGER NOT NULL,
+                product_id INTEGER NOT NULL,
+                spec_snapshot TEXT NOT NULL DEFAULT '',
+                unit TEXT NOT NULL DEFAULT 'PCS',
+                quantity REAL NOT NULL,
+                unit_price REAL NOT NULL DEFAULT 0,
+                carton_no TEXT NOT NULL DEFAULT '',
+                line_note TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (sales_order_id) REFERENCES sales_orders(id),
+                FOREIGN KEY (product_id) REFERENCES products(id)
             );
 
-            CREATE TABLE IF NOT EXISTS shipments (
+            CREATE TABLE IF NOT EXISTS inventory_movements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id INTEGER NOT NULL,
-                shipment_no TEXT NOT NULL UNIQUE,
+                product_id INTEGER NOT NULL,
+                movement_type TEXT NOT NULL,
+                ref_type TEXT NOT NULL,
+                ref_id INTEGER,
+                quantity REAL NOT NULL,
+                unit_cost REAL NOT NULL DEFAULT 0,
+                movement_date TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (order_id) REFERENCES sales_orders(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS shipment_boxes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                shipment_id INTEGER NOT NULL,
-                box_code TEXT NOT NULL UNIQUE,
-                gross_weight_kg REAL NOT NULL,
-                net_weight_kg REAL NOT NULL,
-                volume_cbm REAL NOT NULL,
-                FOREIGN KEY (shipment_id) REFERENCES shipments(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS shipment_box_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                box_id INTEGER NOT NULL,
-                sku TEXT NOT NULL,
-                qty INTEGER NOT NULL,
-                FOREIGN KEY (box_id) REFERENCES shipment_boxes(id),
-                FOREIGN KEY (sku) REFERENCES products(sku)
+                FOREIGN KEY (product_id) REFERENCES products(id)
             );
             """
         )
-
         conn.commit()
 
 
-def require_positive_number(data: dict[str, Any], key: str, num_type: type = int) -> float | int:
-    val = data.get(key)
-    if not isinstance(val, (int, float)):
-        raise ValueError(f"字段 {key} 必须是数字")
-    if val <= 0:
-        raise ValueError(f"字段 {key} 必须大于0")
-    if num_type is int:
-        if int(val) != val:
-            raise ValueError(f"字段 {key} 必须是整数")
-        return int(val)
-    return float(val)
+def parse_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+    except ValueError as exc:
+        raise ValueError("Content-Length 非法") from exc
+    raw = handler.rfile.read(length) if length > 0 else b"{}"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("JSON 格式错误") from exc
+    if not isinstance(data, dict):
+        raise ValueError("请求体必须是 JSON 对象")
+    return data
+
+
+def must_str(data: dict[str, Any], key: str) -> str:
+    v = str(data.get(key, "")).strip()
+    if not v:
+        raise ValueError(f"字段缺失: {key}")
+    return v
+
+
+def to_num(v: Any, field: str, min_val: float | None = None) -> float:
+    try:
+        x = float(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"字段 {field} 必须是数字") from exc
+    if min_val is not None and x < min_val:
+        raise ValueError(f"字段 {field} 必须 >= {min_val}")
+    return x
 
 
 class AppHandler(BaseHTTPRequestHandler):
-    server_version = "WMSaaSERP/0.3"
-
-    def _set_headers(self, code: int = 200, content_type: str = "application/json") -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+    server_version = "WMV1/1.0"
 
     def _json(self, code: int, payload: dict[str, Any] | list[Any]) -> None:
-        self._set_headers(code)
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
-    def _read_json(self) -> dict[str, Any]:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            raise ValueError("Content-Length 非法")
-        body = self.rfile.read(length) if length > 0 else b"{}"
-        try:
-            data = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ValueError("JSON 格式错误") from exc
-        if not isinstance(data, dict):
-            raise ValueError("请求体必须是 JSON 对象")
-        return data
-
     def do_OPTIONS(self) -> None:  # noqa: N802
-        self._set_headers(204)
+        self._json(204, {})
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -176,376 +216,497 @@ class AppHandler(BaseHTTPRequestHandler):
             if path == "/health":
                 return self._json(200, {"status": "ok"})
 
-            if path == "/api/customers":
-                with closing(get_conn()) as conn:
-                    rows = conn.execute(
-                        "SELECT id, customer_code, customer_name, currency, country, created_at FROM customers ORDER BY id DESC"
-                    ).fetchall()
-                return self._json(200, [dict(r) for r in rows])
-
             if path == "/api/products":
                 with closing(get_conn()) as conn:
                     rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
                 return self._json(200, [dict(r) for r in rows])
 
+            if path.startswith("/api/products/"):
+                pid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    row = conn.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+                return self._json(200, dict(row)) if row else self._json(404, {"detail": "商品不存在"})
+
+            if path == "/api/customers":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
+                return self._json(200, [dict(r) for r in rows])
+
+            if path.startswith("/api/customers/"):
+                cid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    row = conn.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone()
+                return self._json(200, dict(row)) if row else self._json(404, {"detail": "客户不存在"})
+
+            if path == "/api/suppliers":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute("SELECT * FROM suppliers ORDER BY id DESC").fetchall()
+                return self._json(200, [dict(r) for r in rows])
+
+            if path.startswith("/api/suppliers/"):
+                sid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    row = conn.execute("SELECT * FROM suppliers WHERE id=?", (sid,)).fetchone()
+                return self._json(200, dict(row)) if row else self._json(404, {"detail": "供应商不存在"})
+
+            if path == "/api/purchases":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute(
+                        "SELECT p.*, s.name supplier_name FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC"
+                    ).fetchall()
+                return self._json(200, [dict(r) for r in rows])
+
+            if path.startswith("/api/purchases/"):
+                pid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    head = conn.execute("SELECT * FROM purchase_orders WHERE id=?", (pid,)).fetchone()
+                    if not head:
+                        return self._json(404, {"detail": "采购单不存在"})
+                    items = conn.execute("SELECT * FROM purchase_order_items WHERE purchase_order_id=?", (pid,)).fetchall()
+                return self._json(200, {"header": dict(head), "items": [dict(i) for i in items]})
+
             if path == "/api/orders":
                 with closing(get_conn()) as conn:
                     rows = conn.execute(
-                        "SELECT id, customer_id, customer_name, customer_po, created_at FROM sales_orders ORDER BY id DESC"
+                        "SELECT o.*, c.name customer_name FROM sales_orders o JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC"
                     ).fetchall()
                 return self._json(200, [dict(r) for r in rows])
-
-            if path == "/api/shipments":
-                with closing(get_conn()) as conn:
-                    rows = conn.execute(
-                        """
-                        SELECT s.id, s.shipment_no, s.order_id, s.created_at,
-                               COALESCE(SUM(b.gross_weight_kg), 0) AS total_gross_weight_kg,
-                               COALESCE(SUM(b.net_weight_kg), 0) AS total_net_weight_kg,
-                               COUNT(b.id) AS box_count
-                        FROM shipments s
-                        LEFT JOIN shipment_boxes b ON b.shipment_id = s.id
-                        GROUP BY s.id
-                        ORDER BY s.id DESC
-                        """
-                    ).fetchall()
-                return self._json(200, [dict(r) for r in rows])
-
-            if path.startswith("/api/shipments/"):
-                shipment_id = int(path.split("/")[-1])
-                with closing(get_conn()) as conn:
-                    shipment = conn.execute(
-                        "SELECT id, order_id, shipment_no, created_at FROM shipments WHERE id = ?",
-                        (shipment_id,),
-                    ).fetchone()
-                    if not shipment:
-                        return self._json(404, {"detail": "发货单不存在"})
-                    boxes = conn.execute(
-                        "SELECT id, box_code, gross_weight_kg, net_weight_kg, volume_cbm FROM shipment_boxes WHERE shipment_id = ? ORDER BY id",
-                        (shipment_id,),
-                    ).fetchall()
-                    box_items: list[dict[str, Any]] = []
-                    for b in boxes:
-                        items = conn.execute(
-                            "SELECT sku, qty FROM shipment_box_items WHERE box_id = ? ORDER BY id",
-                            (b["id"],),
-                        ).fetchall()
-                        box_items.append({**dict(b), "items": [dict(i) for i in items]})
-                return self._json(200, {"shipment": dict(shipment), "boxes": box_items})
 
             if path.startswith("/api/orders/"):
-                order_id = int(path.split("/")[-1])
+                oid = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
-                    order = conn.execute("SELECT * FROM sales_orders WHERE id = ?", (order_id,)).fetchone()
-                    if not order:
-                        return self._json(404, {"detail": "订单不存在"})
-                    lines = conn.execute(
-                        "SELECT sku, ordered_qty, shipped_qty FROM sales_order_lines WHERE order_id = ?",
-                        (order_id,),
-                    ).fetchall()
-                return self._json(200, {"order": dict(order), "lines": [dict(r) for r in lines]})
+                    head = conn.execute("SELECT * FROM sales_orders WHERE id=?", (oid,)).fetchone()
+                    if not head:
+                        return self._json(404, {"detail": "销售单不存在"})
+                    items = conn.execute("SELECT * FROM sales_order_items WHERE sales_order_id=?", (oid,)).fetchall()
+                return self._json(200, {"header": dict(head), "items": [dict(i) for i in items]})
 
-            if path.startswith("/api/inventory/summary/"):
-                sku = unquote(path.split("/api/inventory/summary/", 1)[1])
+            if path == "/api/inventory/movements":
                 with closing(get_conn()) as conn:
-                    bal = conn.execute(
-                        "SELECT on_hand_qty, shipped_qty FROM inventory_balances WHERE sku = ?", (sku,)
-                    ).fetchone()
-                    if not bal:
-                        return self._json(404, {"detail": "SKU 不存在"})
                     rows = conn.execute(
-                        "SELECT SUM(ordered_qty) AS ordered_total, SUM(shipped_qty) AS shipped_total FROM sales_order_lines WHERE sku = ?",
-                        (sku,),
-                    ).fetchone()
-                ordered = int(rows["ordered_total"] or 0)
-                shipped_so = int(rows["shipped_total"] or 0)
-                return self._json(
-                    200,
-                    {
-                        "sku": sku,
-                        "on_hand": bal["on_hand_qty"],
-                        "shipped_total": bal["shipped_qty"],
-                        "ordered_total": ordered,
-                        "remaining_order_qty": ordered - shipped_so,
-                    },
-                )
+                        """
+                        SELECT m.*, p.product_code, p.name product_name
+                        FROM inventory_movements m
+                        JOIN products p ON p.id=m.product_id
+                        ORDER BY m.id DESC
+                        """
+                    ).fetchall()
+                return self._json(200, [dict(r) for r in rows])
+
+            if path == "/api/inventory/summary":
+                with closing(get_conn()) as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT
+                          p.id product_id,
+                          p.product_code,
+                          p.name,
+                          p.spec,
+                          p.unit,
+                          p.safety_stock,
+                          COALESCE(SUM(CASE WHEN m.quantity > 0 THEN m.quantity ELSE 0 END), 0) total_in,
+                          COALESCE(SUM(CASE WHEN m.quantity < 0 THEN -m.quantity ELSE 0 END), 0) total_out,
+                          COALESCE(SUM(m.quantity), 0) on_hand
+                        FROM products p
+                        LEFT JOIN inventory_movements m ON m.product_id=p.id
+                        GROUP BY p.id
+                        ORDER BY p.id DESC
+                        """
+                    ).fetchall()
+                data = []
+                for r in rows:
+                    d = dict(r)
+                    d["stock_status"] = "LOW" if d["on_hand"] < d["safety_stock"] else "OK"
+                    data.append(d)
+                return self._json(200, data)
+
+            if path == "/api/shipments":
+                return self._json(200, [])
 
             return self._json(404, {"detail": "Not Found"})
-        except ValueError:
-            return self._json(400, {"detail": "参数错误"})
         except Exception as exc:  # noqa: BLE001
-            return self._json(500, {"detail": f"服务器错误: {exc}"})
+            return self._json(400, {"detail": str(exc)})
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        now = datetime.utcnow().isoformat()
         try:
-            data = self._read_json()
-
-            if path == "/api/customers":
-                for k in ["customer_code", "customer_name"]:
-                    if not data.get(k):
-                        return self._json(400, {"detail": f"字段缺失: {k}"})
-                currency = data.get("currency") or "USD"
-                country = data.get("country") or ""
-                with closing(get_conn()) as conn:
-                    try:
-                        conn.execute(
-                            "INSERT INTO customers (customer_code, customer_name, currency, country, created_at) VALUES (?, ?, ?, ?, ?)",
-                            (data["customer_code"], data["customer_name"], currency, country, now),
-                        )
-                        conn.commit()
-                    except sqlite3.IntegrityError as exc:
-                        return self._json(400, {"detail": f"客户创建失败: {exc}"})
-                return self._json(200, {"message": "客户创建成功", "customer_code": data["customer_code"]})
+            data = parse_json_body(self)
 
             if path == "/api/products":
-                for k in [
-                    "sku",
-                    "category_name",
-                    "category_hs_code",
-                    "color",
-                    "size",
-                    "customer_hs_code",
-                    "customs_cn_name",
-                ]:
-                    if not data.get(k):
-                        return self._json(400, {"detail": f"字段缺失: {k}"})
-                default_packing_qty = require_positive_number(data, "default_packing_qty", int)
-                carton_length_cm = require_positive_number(data, "carton_length_cm", float)
-                carton_width_cm = require_positive_number(data, "carton_width_cm", float)
-                carton_height_cm = require_positive_number(data, "carton_height_cm", float)
-                standard_gross_weight_kg = require_positive_number(data, "standard_gross_weight_kg", float)
-                standard_net_weight_kg = require_positive_number(data, "standard_net_weight_kg", float)
+                now = now_iso()
+                product_code = must_str(data, "product_code")
+                name = must_str(data, "name")
                 with closing(get_conn()) as conn:
-                    try:
-                        conn.execute(
-                            """
-                            INSERT INTO products (
-                                sku, category_name, category_hs_code, color, size,
-                                default_packing_qty, carton_length_cm, carton_width_cm, carton_height_cm,
-                                standard_gross_weight_kg, standard_net_weight_kg,
-                                customer_hs_code, customs_cn_name
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                data["sku"],
-                                data["category_name"],
-                                data["category_hs_code"],
-                                data["color"],
-                                data["size"],
-                                default_packing_qty,
-                                carton_length_cm,
-                                carton_width_cm,
-                                carton_height_cm,
-                                standard_gross_weight_kg,
-                                standard_net_weight_kg,
-                                data["customer_hs_code"],
-                                data["customs_cn_name"],
-                            ),
-                        )
-                        conn.execute(
-                            "INSERT OR IGNORE INTO inventory_balances (sku, on_hand_qty, shipped_qty) VALUES (?, 0, 0)",
-                            (data["sku"],),
-                        )
-                        conn.commit()
-                    except sqlite3.IntegrityError as exc:
-                        return self._json(400, {"detail": f"商品创建失败: {exc}"})
-                return self._json(200, {"message": "商品创建成功", "sku": data["sku"]})
-
-            if path == "/api/inventory/receipt":
-                sku = data.get("sku")
-                reference_no = data.get("reference_no")
-                qty = require_positive_number(data, "qty", int)
-                if not sku or not reference_no:
-                    return self._json(400, {"detail": "字段缺失: sku/reference_no"})
-                with closing(get_conn()) as conn:
-                    product = conn.execute("SELECT sku FROM products WHERE sku = ?", (sku,)).fetchone()
-                    if not product:
-                        return self._json(404, {"detail": "SKU 不存在"})
                     conn.execute(
-                        "UPDATE inventory_balances SET on_hand_qty = on_hand_qty + ? WHERE sku = ?",
-                        (qty, sku),
-                    )
-                    conn.execute(
-                        "INSERT INTO inventory_ledger (sku, event_type, qty_change, reference_no, created_at) VALUES (?, 'RECEIPT', ?, ?, ?)",
-                        (sku, qty, reference_no, now),
+                        """
+                        INSERT INTO products(product_code,name,spec,unit,hs_code,customs_name,material,origin_country,
+                          qty_per_carton,carton_length,carton_width,carton_height,net_weight,gross_weight,safety_stock,is_active,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            product_code,
+                            name,
+                            data.get("spec", ""),
+                            data.get("unit", "PCS"),
+                            data.get("hs_code", ""),
+                            data.get("customs_name", ""),
+                            data.get("material", ""),
+                            data.get("origin_country", "CN"),
+                            to_num(data.get("qty_per_carton", 0), "qty_per_carton", 0),
+                            to_num(data.get("carton_length", 0), "carton_length", 0),
+                            to_num(data.get("carton_width", 0), "carton_width", 0),
+                            to_num(data.get("carton_height", 0), "carton_height", 0),
+                            to_num(data.get("net_weight", 0), "net_weight", 0),
+                            to_num(data.get("gross_weight", 0), "gross_weight", 0),
+                            to_num(data.get("safety_stock", 0), "safety_stock", 0),
+                            int(data.get("is_active", 1)),
+                            now,
+                            now,
+                        ),
                     )
                     conn.commit()
-                return self._json(200, {"message": "入库成功", "sku": sku, "qty": qty})
+                return self._json(200, {"message": "商品创建成功"})
 
-            if path == "/api/orders":
-                customer_id = data.get("customer_id")
-                customer_name = (data.get("customer_name") or "").strip()
-                customer_po = (data.get("customer_po") or "").strip()
-                lines = data.get("lines", [])
-                if not customer_po:
-                    return self._json(400, {"detail": "字段缺失: customer_po"})
-                if not isinstance(lines, list) or len(lines) == 0:
-                    return self._json(400, {"detail": "lines 必须是非空数组"})
-
+            if path == "/api/customers":
                 with closing(get_conn()) as conn:
-                    if customer_id is not None:
-                        if not isinstance(customer_id, int) or customer_id <= 0:
-                            return self._json(400, {"detail": "customer_id 必须是正整数"})
-                        row = conn.execute(
-                            "SELECT customer_name FROM customers WHERE id = ?", (customer_id,)
-                        ).fetchone()
-                        if not row:
-                            return self._json(404, {"detail": "客户不存在"})
-                        customer_name = row["customer_name"]
-                    elif not customer_name:
-                        return self._json(400, {"detail": "需要 customer_id 或 customer_name"})
+                    conn.execute(
+                        "INSERT INTO customers(code,name,country,currency,trade_term,default_port,payment_term,contact,phone,email,note) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            must_str(data, "code"),
+                            must_str(data, "name"),
+                            data.get("country", ""),
+                            data.get("currency", "USD"),
+                            data.get("trade_term", ""),
+                            data.get("default_port", ""),
+                            data.get("payment_term", ""),
+                            data.get("contact", ""),
+                            data.get("phone", ""),
+                            data.get("email", ""),
+                            data.get("note", ""),
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "客户创建成功"})
 
+            if path == "/api/suppliers":
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "INSERT INTO suppliers(code,name,country,currency,payment_term,tax_scheme,contact,phone,email,note) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            must_str(data, "code"),
+                            must_str(data, "name"),
+                            data.get("country", ""),
+                            data.get("currency", "USD"),
+                            data.get("payment_term", ""),
+                            data.get("tax_scheme", ""),
+                            data.get("contact", ""),
+                            data.get("phone", ""),
+                            data.get("email", ""),
+                            data.get("note", ""),
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "供应商创建成功"})
+
+            if path == "/api/purchases":
+                items = data.get("items", [])
+                if not isinstance(items, list) or not items:
+                    raise ValueError("items 必须是非空数组")
+                now = now_iso()
+                with closing(get_conn()) as conn:
                     cur = conn.cursor()
                     cur.execute(
-                        "INSERT INTO sales_orders (customer_id, customer_name, customer_po, created_at) VALUES (?, ?, ?, ?)",
-                        (customer_id, customer_name, customer_po, now),
+                        "INSERT INTO purchase_orders(purchase_no,supplier_id,currency,eta,port,payment_term,transport_mode,status,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            must_str(data, "purchase_no"),
+                            int(data.get("supplier_id")),
+                            data.get("currency", "USD"),
+                            data.get("eta", ""),
+                            data.get("port", ""),
+                            data.get("payment_term", ""),
+                            data.get("transport_mode", ""),
+                            data.get("status", "CONFIRMED"),
+                            data.get("note", ""),
+                            now,
+                        ),
                     )
-                    order_id = cur.lastrowid
-                    for line in lines:
-                        if not isinstance(line, dict):
-                            conn.rollback()
-                            return self._json(400, {"detail": "line 格式错误"})
-                        sku = line.get("sku")
-                        if not sku:
-                            conn.rollback()
-                            return self._json(400, {"detail": "line 缺少 sku"})
-                        qty = require_positive_number(line, "qty", int)
-                        exists = conn.execute("SELECT sku FROM products WHERE sku = ?", (sku,)).fetchone()
-                        if not exists:
-                            conn.rollback()
-                            return self._json(404, {"detail": f"SKU 不存在: {sku}"})
+                    po_id = cur.lastrowid
+                    for it in items:
+                        qty = to_num(it.get("quantity"), "quantity", 0.0001)
+                        unit_price = to_num(it.get("unit_price", 0), "unit_price", 0)
+                        product_id = int(it.get("product_id"))
                         cur.execute(
-                            "INSERT INTO sales_order_lines (order_id, sku, ordered_qty, shipped_qty) VALUES (?, ?, ?, 0)",
-                            (order_id, sku, qty),
+                            "INSERT INTO purchase_order_items(purchase_order_id,product_id,spec_snapshot,unit,quantity,unit_price,carton_count,line_note) VALUES(?,?,?,?,?,?,?,?)",
+                            (
+                                po_id,
+                                product_id,
+                                it.get("spec_snapshot", ""),
+                                it.get("unit", "PCS"),
+                                qty,
+                                unit_price,
+                                to_num(it.get("carton_count", 0), "carton_count", 0),
+                                it.get("line_note", ""),
+                            ),
+                        )
+                        cur.execute(
+                            "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (
+                                product_id,
+                                "PURCHASE_IN",
+                                "PURCHASE",
+                                po_id,
+                                qty,
+                                unit_price,
+                                now,
+                                f"采购入库 {data.get('purchase_no', '')}",
+                                now,
+                            ),
                         )
                     conn.commit()
-                return self._json(200, {"message": "订单创建成功", "order_id": order_id})
+                return self._json(200, {"message": "采购单创建成功", "id": po_id})
 
-            if path == "/api/shipments":
-                order_id = require_positive_number(data, "order_id", int)
-                shipment_no = data.get("shipment_no")
-                boxes = data.get("boxes", [])
-                if not shipment_no:
-                    return self._json(400, {"detail": "字段缺失: shipment_no"})
-                if not isinstance(boxes, list) or len(boxes) == 0:
-                    return self._json(400, {"detail": "boxes 必须是非空数组"})
+            if path == "/api/orders":
+                items = data.get("items", [])
+                if not isinstance(items, list) or not items:
+                    raise ValueError("items 必须是非空数组")
+                now = now_iso()
                 with closing(get_conn()) as conn:
-                    order = conn.execute("SELECT id FROM sales_orders WHERE id = ?", (order_id,)).fetchone()
-                    if not order:
-                        return self._json(404, {"detail": "订单不存在"})
-                    order_lines = conn.execute(
-                        "SELECT sku, ordered_qty, shipped_qty FROM sales_order_lines WHERE order_id = ?",
-                        (order_id,),
-                    ).fetchall()
-                    line_map = {
-                        row["sku"]: {"ordered": row["ordered_qty"], "shipped": row["shipped_qty"]}
-                        for row in order_lines
-                    }
-                    picked: dict[str, int] = {}
-                    total_gross_weight = 0.0
-                    total_net_weight = 0.0
-                    for box in boxes:
-                        if not isinstance(box, dict):
-                            return self._json(400, {"detail": "box 格式错误"})
-                        box_code = box.get("box_code")
-                        if not box_code:
-                            return self._json(400, {"detail": "box 缺少 box_code"})
-                        gross = require_positive_number(box, "gross_weight_kg", float)
-                        net = require_positive_number(box, "net_weight_kg", float)
-                        _ = require_positive_number(box, "volume_cbm", float)
-                        items = box.get("items", [])
-                        if not isinstance(items, list) or len(items) == 0:
-                            return self._json(400, {"detail": f"box {box_code} items 必须非空"})
-                        total_gross_weight += float(gross)
-                        total_net_weight += float(net)
-                        for item in items:
-                            if not isinstance(item, dict):
-                                return self._json(400, {"detail": "item 格式错误"})
-                            sku = item.get("sku")
-                            if not sku:
-                                return self._json(400, {"detail": "item 缺少 sku"})
-                            qty = require_positive_number(item, "qty", int)
-                            picked[sku] = picked.get(sku, 0) + qty
-                    for sku, qty in picked.items():
-                        if sku not in line_map:
-                            return self._json(400, {"detail": f"SKU {sku} 不在订单中"})
-                        remaining = line_map[sku]["ordered"] - line_map[sku]["shipped"]
-                        if qty > remaining:
-                            return self._json(400, {"detail": f"SKU {sku} 发货超订单剩余"})
-                        bal = conn.execute("SELECT on_hand_qty FROM inventory_balances WHERE sku = ?", (sku,)).fetchone()
-                        if not bal or bal["on_hand_qty"] < qty:
-                            return self._json(400, {"detail": f"SKU {sku} 库存不足"})
                     cur = conn.cursor()
-                    try:
+                    cur.execute(
+                        "INSERT INTO sales_orders(sales_no,customer_id,currency,port,etd,payment_term,transport_mode,shipping_mark,status,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            must_str(data, "sales_no"),
+                            int(data.get("customer_id")),
+                            data.get("currency", "USD"),
+                            data.get("port", ""),
+                            data.get("etd", ""),
+                            data.get("payment_term", ""),
+                            data.get("transport_mode", ""),
+                            data.get("shipping_mark", ""),
+                            data.get("status", "CONFIRMED"),
+                            data.get("note", ""),
+                            now,
+                        ),
+                    )
+                    so_id = cur.lastrowid
+
+                    for it in items:
+                        qty = to_num(it.get("quantity"), "quantity", 0.0001)
+                        unit_price = to_num(it.get("unit_price", 0), "unit_price", 0)
+                        product_id = int(it.get("product_id"))
+
+                        row = conn.execute(
+                            "SELECT COALESCE(SUM(quantity),0) q FROM inventory_movements WHERE product_id=?",
+                            (product_id,),
+                        ).fetchone()
+                        available = float(row["q"])
+                        if qty > available:
+                            conn.rollback()
+                            return self._json(400, {"detail": f"product_id={product_id} 库存不足，available={available}"})
+
                         cur.execute(
-                            "INSERT INTO shipments (order_id, shipment_no, created_at) VALUES (?, ?, ?)",
-                            (order_id, shipment_no, now),
+                            "INSERT INTO sales_order_items(sales_order_id,product_id,spec_snapshot,unit,quantity,unit_price,carton_no,line_note) VALUES(?,?,?,?,?,?,?,?)",
+                            (
+                                so_id,
+                                product_id,
+                                it.get("spec_snapshot", ""),
+                                it.get("unit", "PCS"),
+                                qty,
+                                unit_price,
+                                it.get("carton_no", ""),
+                                it.get("line_note", ""),
+                            ),
                         )
-                        shipment_id = cur.lastrowid
-                        for box in boxes:
-                            cur.execute(
-                                "INSERT INTO shipment_boxes (shipment_id, box_code, gross_weight_kg, net_weight_kg, volume_cbm) VALUES (?, ?, ?, ?, ?)",
-                                (
-                                    shipment_id,
-                                    box["box_code"],
-                                    float(box["gross_weight_kg"]),
-                                    float(box["net_weight_kg"]),
-                                    float(box["volume_cbm"]),
-                                ),
-                            )
-                            box_id = cur.lastrowid
-                            for item in box["items"]:
-                                cur.execute(
-                                    "INSERT INTO shipment_box_items (box_id, sku, qty) VALUES (?, ?, ?)",
-                                    (box_id, item["sku"], int(item["qty"])),
-                                )
-                        for sku, qty in picked.items():
-                            cur.execute(
-                                "UPDATE inventory_balances SET on_hand_qty = on_hand_qty - ?, shipped_qty = shipped_qty + ? WHERE sku = ?",
-                                (qty, qty, sku),
-                            )
-                            cur.execute(
-                                "UPDATE sales_order_lines SET shipped_qty = shipped_qty + ? WHERE order_id = ? AND sku = ?",
-                                (qty, order_id, sku),
-                            )
-                            cur.execute(
-                                "INSERT INTO inventory_ledger (sku, event_type, qty_change, reference_no, created_at) VALUES (?, 'SHIPMENT', ?, ?, ?)",
-                                (sku, -qty, shipment_no, now),
-                            )
-                        conn.commit()
-                    except sqlite3.IntegrityError as exc:
-                        conn.rollback()
-                        return self._json(400, {"detail": f"发货失败: {exc}"})
-                return self._json(
-                    200,
-                    {
-                        "message": "发货成功",
-                        "shipment_no": shipment_no,
-                        "total_gross_weight_kg": round(total_gross_weight, 3),
-                        "total_net_weight_kg": round(total_net_weight, 3),
-                        "sku_shipped": picked,
-                    },
-                )
+                        cur.execute(
+                            "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (
+                                product_id,
+                                "SALES_OUT",
+                                "SALES",
+                                so_id,
+                                -qty,
+                                unit_price,
+                                now,
+                                f"销售出库 {data.get('sales_no', '')}",
+                                now,
+                            ),
+                        )
+                    conn.commit()
+                return self._json(200, {"message": "销售单创建成功", "id": so_id})
+
+            if path == "/api/inventory/adjust":
+                now = now_iso()
+                product_id = int(data.get("product_id"))
+                qty = to_num(data.get("quantity"), "quantity", 0.0001)
+                direction = must_str(data, "direction").upper()
+                movement_type = "ADJUST_IN" if direction == "IN" else "ADJUST_OUT"
+                signed_qty = qty if direction == "IN" else -qty
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (
+                            product_id,
+                            movement_type,
+                            "MANUAL",
+                            None,
+                            signed_qty,
+                            to_num(data.get("unit_cost", 0), "unit_cost", 0),
+                            now,
+                            data.get("note", ""),
+                            now,
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "库存调整成功"})
 
             return self._json(404, {"detail": "Not Found"})
-        except ValueError as exc:
-            return self._json(400, {"detail": str(exc)})
+        except sqlite3.IntegrityError as exc:
+            return self._json(400, {"detail": f"数据约束错误: {exc}"})
         except Exception as exc:  # noqa: BLE001
-            return self._json(500, {"detail": f"服务器错误: {exc}"})
+            return self._json(400, {"detail": str(exc)})
+
+    def do_PUT(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        try:
+            data = parse_json_body(self)
+
+            if path.startswith("/api/products/"):
+                pid = int(path.split("/")[-1])
+                now = now_iso()
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        """
+                        UPDATE products
+                        SET product_code=?,name=?,spec=?,unit=?,hs_code=?,customs_name=?,material=?,origin_country=?,
+                            qty_per_carton=?,carton_length=?,carton_width=?,carton_height=?,net_weight=?,gross_weight=?,
+                            safety_stock=?,is_active=?,updated_at=?
+                        WHERE id=?
+                        """,
+                        (
+                            must_str(data, "product_code"),
+                            must_str(data, "name"),
+                            data.get("spec", ""),
+                            data.get("unit", "PCS"),
+                            data.get("hs_code", ""),
+                            data.get("customs_name", ""),
+                            data.get("material", ""),
+                            data.get("origin_country", "CN"),
+                            to_num(data.get("qty_per_carton", 0), "qty_per_carton", 0),
+                            to_num(data.get("carton_length", 0), "carton_length", 0),
+                            to_num(data.get("carton_width", 0), "carton_width", 0),
+                            to_num(data.get("carton_height", 0), "carton_height", 0),
+                            to_num(data.get("net_weight", 0), "net_weight", 0),
+                            to_num(data.get("gross_weight", 0), "gross_weight", 0),
+                            to_num(data.get("safety_stock", 0), "safety_stock", 0),
+                            int(data.get("is_active", 1)),
+                            now,
+                            pid,
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "商品更新成功"})
+
+            if path.startswith("/api/customers/"):
+                cid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "UPDATE customers SET code=?,name=?,country=?,currency=?,trade_term=?,default_port=?,payment_term=?,contact=?,phone=?,email=?,note=? WHERE id=?",
+                        (
+                            must_str(data, "code"),
+                            must_str(data, "name"),
+                            data.get("country", ""),
+                            data.get("currency", "USD"),
+                            data.get("trade_term", ""),
+                            data.get("default_port", ""),
+                            data.get("payment_term", ""),
+                            data.get("contact", ""),
+                            data.get("phone", ""),
+                            data.get("email", ""),
+                            data.get("note", ""),
+                            cid,
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "客户更新成功"})
+
+            if path.startswith("/api/suppliers/"):
+                sid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "UPDATE suppliers SET code=?,name=?,country=?,currency=?,payment_term=?,tax_scheme=?,contact=?,phone=?,email=?,note=? WHERE id=?",
+                        (
+                            must_str(data, "code"),
+                            must_str(data, "name"),
+                            data.get("country", ""),
+                            data.get("currency", "USD"),
+                            data.get("payment_term", ""),
+                            data.get("tax_scheme", ""),
+                            data.get("contact", ""),
+                            data.get("phone", ""),
+                            data.get("email", ""),
+                            data.get("note", ""),
+                            sid,
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "供应商更新成功"})
+
+            if path.startswith("/api/purchases/"):
+                pid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "UPDATE purchase_orders SET currency=?,eta=?,port=?,payment_term=?,transport_mode=?,status=?,note=? WHERE id=?",
+                        (
+                            data.get("currency", "USD"),
+                            data.get("eta", ""),
+                            data.get("port", ""),
+                            data.get("payment_term", ""),
+                            data.get("transport_mode", ""),
+                            data.get("status", "CONFIRMED"),
+                            data.get("note", ""),
+                            pid,
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "采购单更新成功"})
+
+            if path.startswith("/api/orders/"):
+                oid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "UPDATE sales_orders SET currency=?,port=?,etd=?,payment_term=?,transport_mode=?,shipping_mark=?,status=?,note=? WHERE id=?",
+                        (
+                            data.get("currency", "USD"),
+                            data.get("port", ""),
+                            data.get("etd", ""),
+                            data.get("payment_term", ""),
+                            data.get("transport_mode", ""),
+                            data.get("shipping_mark", ""),
+                            data.get("status", "CONFIRMED"),
+                            data.get("note", ""),
+                            oid,
+                        ),
+                    )
+                    conn.commit()
+                return self._json(200, {"message": "销售单更新成功"})
+
+            return self._json(404, {"detail": "Not Found"})
+        except sqlite3.IntegrityError as exc:
+            return self._json(400, {"detail": f"数据约束错误: {exc}"})
+        except Exception as exc:  # noqa: BLE001
+            return self._json(400, {"detail": str(exc)})
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     init_db()
-    httpd = ThreadingHTTPServer((host, port), AppHandler)
+    server = ThreadingHTTPServer((host, port), AppHandler)
     print(f"WM backend running at http://{host}:{port}")
     try:
-        httpd.serve_forever()
+        server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        httpd.server_close()
+        server.server_close()
 
 
 if __name__ == "__main__":
