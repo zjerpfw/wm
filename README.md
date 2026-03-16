@@ -1,66 +1,45 @@
 # wm
 
-外贸订单与库存系统 MVP（SaaS ERP 方向，零外网依赖可运行）。
+简易进销存系统原型（SaaS ERP 方向）。
 
-## 当前形态（你要求的下一步）
+## 本次实现（按你的最新要求）
 
-- ✅ 每个业务一个页面跳转：基础资料、入库、订单、发货、库存。
-- ✅ 输入与基础资料联动：订单选客户、入库/库存选 SKU、发货选订单。
-- ✅ 继续保持离线可运行（Python 标准库 + SQLite + 原生前端）。
+- 使用 **Vue 3 + Element Plus** 做了一个 SPA 原型页面：`frontend/spa.html`。
+- 每个业务功能独立路由：
+  - `/base-data` 基础资料
+  - `/purchase` 采购入库
+  - `/sales` 销售出库
+  - `/inventory` 库存查询
+- 基础资料模型：
+  - Products（ID、名称、规格、单位、默认单价）
+  - Suppliers（ID、供应商名称、联系人、电话）
+- 关键联动（采购入库页）已实现：
+  - 选择商品后自动带出“规格、单位、默认单价”
+  - 数量可手工录入
+- 使用响应式 store 做状态管理，模拟数据库（内存态）。
 
-## 页面导航
+## 运行方式
 
-- `frontend/index.html`：ERP 导航门户
-- `frontend/pages/base-data.html`：基础资料（客户 + 商品）
-- `frontend/pages/receipt.html`：入库业务
-- `frontend/pages/order.html`：销售订单
-- `frontend/pages/shipment.html`：发货装箱
-- `frontend/pages/inventory.html`：库存查询
-
-## API（核心）
-
-- 基础资料
-  - `GET /api/customers`
-  - `POST /api/customers`
-  - `GET /api/products`
-  - `POST /api/products`
-- 业务单据
-  - `POST /api/inventory/receipt`
-  - `GET /api/orders`
-  - `POST /api/orders`
-  - `GET /api/shipments`
-  - `GET /api/shipments/{id}`
-  - `POST /api/shipments`
-- 查询
-  - `GET /api/inventory/summary/{sku}`
-
-## 本地运行
+> 说明：该原型依赖 CDN 加载 Vue / Vue Router / Element Plus。
 
 ```bash
 cd /workspace/wm
-python3 backend/app/main.py
-```
-
-新开终端：
-
-```bash
 python3 -m http.server 5500 -d frontend
 ```
 
-访问：
+浏览器访问：
 
-- `http://127.0.0.1:5500`
+- `http://127.0.0.1:5500/spa.html`
 
-## 打包后端（可选）
+## 架构说明（原型阶段）
 
-```bash
-./scripts/build_backend.sh
-python3 dist/wm_backend.pyz
-```
+- 前端：Vue SPA + 路由 + 组件化页面
+- 状态：单一 reactive store（可替换为 Pinia）
+- 后端：后续可对接现有 Python API 或直接升级为多租户 SaaS 后端
 
-## 下一步建议（真正 SaaS ERP）
+## 下一步建议
 
-1. 增加登录与角色权限（销售/仓库/报关/财务）。
-2. 增加报关单模块（按发货箱明细自动汇总）。
-3. 增加导入导出（Excel 模板导入、报表导出）。
-4. 增加多租户（company_id）实现 SaaS 化隔离。
+1. 把内存 store 换成真实 API 持久化。
+2. 加入登录与角色权限（采购/销售/仓库/财务）。
+3. 加入客户、销售订单、应收应付等模块。
+4. 增加租户字段 company_id，支持多公司隔离。
