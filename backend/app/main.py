@@ -9,8 +9,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-DB_PATH = BASE_DIR / "backend" / "wm.db"
+def resolve_db_path() -> Path:
+    # source mode: /repo/backend/wm.db
+    src_candidate = Path(__file__).resolve().parents[2] / "backend" / "wm.db"
+    if src_candidate.parent.exists():
+        return src_candidate
+    # packaged mode (.pyz): fallback to current working directory
+    return Path.cwd() / "wm.db"
+
+
+DB_PATH = resolve_db_path()
 
 
 def get_conn() -> sqlite3.Connection:

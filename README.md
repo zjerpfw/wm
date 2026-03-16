@@ -35,18 +35,22 @@
 wm/
 ├── backend/
 │   ├── app/
+│   │   ├── __init__.py
+│   │   ├── __main__.py
 │   │   └── main.py
 │   └── requirements.txt
-└── frontend/
-    ├── index.html
-    └── app.js
+├── frontend/
+│   ├── index.html
+│   └── app.js
+└── scripts/
+    └── build_backend.sh
 ```
 
 ---
 
 ## 本地运行（无需 pip install）
 
-### 1) 启动后端
+### 1) 启动后端（源码方式）
 
 ```bash
 cd /workspace/wm
@@ -64,6 +68,34 @@ python3 -m http.server 5500 -d frontend
 
 访问：
 - `http://127.0.0.1:5500`
+
+---
+
+## 编译打包（本地可执行软件包）
+
+你说的“直接编译后本地用”，这里提供 **离线可打包** 方案：把后端打成一个 `pyz` 可执行包。
+
+### 1) 生成可执行包
+
+```bash
+cd /workspace/wm
+./scripts/build_backend.sh
+```
+
+输出文件：
+- `dist/wm_backend.pyz`
+
+### 2) 运行打包后的后端
+
+```bash
+python3 dist/wm_backend.pyz
+```
+
+然后前端照常运行：
+
+```bash
+python3 -m http.server 5500 -d frontend
+```
 
 ---
 
