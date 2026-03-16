@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>库存查询</title><link rel="stylesheet" href="../style.css"></head><body>
+<div class="top"><a href="../index.html">← 首页</a>库存查询</div>
+<div class="wrap"><div class="card"><h2>库存与剩余查询</h2><div class="hint">SKU 下拉来自商品主数据。</div>
+<table><thead><tr><th>SKU</th></tr></thead><tbody><tr><td><select id="skuSelect"></select></td></tr></tbody></table>
+<div class="actions"><button onclick="queryInventory()">查询</button><button class="secondary" onclick="loadSkuOptions()">刷新SKU</button></div>
+</div><div class="card"><h2>接口结果</h2><pre id="result">等待操作...</pre></div></div>
+<script src="../app.js"></script>
+<script>
+const {api,fetchProducts,fillSelect}=window.WM;
+async function loadSkuOptions(){const rows=await fetchProducts();fillSelect('skuSelect',rows,'sku','sku')}
+async function queryInventory(){const sku=document.getElementById('skuSelect').value;await api(`/api/inventory/summary/${encodeURIComponent(sku)}`)}
+loadSkuOptions();
+</script>
+</body></html>
