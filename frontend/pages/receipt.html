@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>入库业务</title><link rel="stylesheet" href="../style.css"></head><body>
+<div class="top"><a href="../index.html">← 首页</a>入库业务</div>
+<div class="wrap"><div class="card"><h2>入库单</h2><div class="hint">SKU 下拉来自基础资料商品主数据。</div>
+<table><thead><tr><th>SKU</th><th>入库数量</th><th>参考单号</th></tr></thead><tbody><tr>
+<td><select id="skuSelect"></select></td><td><input id="qty" type="number" value="100"></td><td><input id="reference_no" value="GRN-001"></td>
+</tr></tbody></table>
+<div class="actions"><button onclick="submitReceipt()">提交入库</button><button class="secondary" onclick="loadSkuOptions()">刷新SKU</button></div>
+</div><div class="card"><h2>接口结果</h2><pre id="result">等待操作...</pre></div></div>
+<script src="../app.js"></script>
+<script>
+const {api,fetchProducts,fillSelect}=window.WM;
+async function loadSkuOptions(){const rows=await fetchProducts();fillSelect('skuSelect',rows,'sku','sku')}
+async function submitReceipt(){await api('/api/inventory/receipt',{method:'POST',body:JSON.stringify({sku:document.getElementById('skuSelect').value,qty:Number(document.getElementById('qty').value),reference_no:document.getElementById('reference_no').value.trim()})})}
+loadSkuOptions();
+</script>
+</body></html>
