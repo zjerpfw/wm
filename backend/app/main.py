@@ -213,8 +213,18 @@ def stock_available(conn: sqlite3.Connection, product_id: int) -> float:
     return float(row["total_in"] - row["total_out"])
 
 
+def ensure_doc_editable(current_status: str) -> None:
+    if current_status == "VOIDED":
+        raise ValueError("已作废单据不允许修改")
+
+
+def ensure_saved_items_readonly(current_status: str, payload: dict[str, Any]) -> None:
+    if current_status == "SAVED" and "items" in payload:
+        raise ValueError("单据已保存，明细只读，不允许修改商品/数量/单价")
+
+
 class AppHandler(BaseHTTPRequestHandler):
-    server_version = "WMV1/1.0.1"
+    server_version = "WMV1/1.0.2"
 
     def _write(self, code: int, payload: dict[str, Any]) -> None:
         self.send_response(code)
@@ -345,7 +355,22 @@ class AppHandler(BaseHTTPRequestHandler):
             if path == "/api/inventory/movements":
                 with closing(get_conn()) as conn:
                     rows = conn.execute(
-                        "SELECT m.*, p.product_code, p.name AS product_name FROM inventory_movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC"
+                        """
+                        SELECT
+                          m.*,
+                          p.product_code,
+                          p.name AS product_name,
+                          CASE
+                            WHEN m.ref_type IN ('PURCHASE','VOID_PURCHASE') THEN po.purchase_no
+                            WHEN m.ref_type IN ('SALES','VOID_SALES') THEN so.sales_no
+                            ELSE ''
+                          END AS ref_no
+                        FROM inventory_movements m
+                        JOIN products p ON p.id=m.product_id
+                        LEFT JOIN purchase_orders po ON po.id=m.ref_id
+                        LEFT JOIN sales_orders so ON so.id=m.ref_id
+                        ORDER BY m.id DESC
+                        """
                     ).fetchall()
                 return self.ok([dict(r) for r in rows])
 
@@ -436,6 +461,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 if not isinstance(items, list) or not items:
                     raise ValueError("采购单 items 不能为空")
                 status = validate_doc_status(data.get("status", "DRAFT"))
+                if status == "VOIDED":
+                    raise ValueError("新建采购单不允许直接设为 VOIDED")
                 with closing(get_conn()) as conn:
                     cur = conn.cursor()
                     cur.execute(
@@ -473,6 +500,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 if not isinstance(items, list) or not items:
                     raise ValueError("销售单 items 不能为空")
                 status = validate_doc_status(data.get("status", "DRAFT"))
+                if status == "VOIDED":
+                    raise ValueError("新建销售单不允许直接设为 VOIDED")
                 with closing(get_conn()) as conn:
                     cur = conn.cursor()
                     cur.execute(
@@ -606,9 +635,62 @@ class AppHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/purchases/"):
                 pid = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
+                    current = conn.execute("SELECT * FROM purchase_orders WHERE id=?", (pid,)).fetchone()
+                    if not current:
+                        return self.err("采购单不存在", 404)
+                    current_status = str(current["status"])
+                    ensure_doc_editable(current_status)
+                    ensure_saved_items_readonly(current_status, data)
+
+                    items = data.get("items")
+                    if items is not None:
+                        if not isinstance(items, list) or not items:
+                            raise ValueError("采购单 items 不能为空")
+                        conn.execute("DELETE FROM purchase_order_items WHERE purchase_order_id=?", (pid,))
+                        conn.execute("DELETE FROM inventory_movements WHERE ref_type='PURCHASE' AND ref_id=?", (pid,))
+                        for it in items:
+                            qty = to_num(it.get("quantity"), "quantity", 0.0001)
+                            unit_price = to_num(it.get("unit_price", 0), "unit_price", 0)
+                            product_id = int(it.get("product_id"))
+                            conn.execute(
+                                "INSERT INTO purchase_order_items(purchase_order_id,product_id,spec_snapshot,unit,quantity,unit_price,carton_count,line_note) VALUES(?,?,?,?,?,?,?,?)",
+                                (pid, product_id, it.get("spec_snapshot", ""), it.get("unit", "PCS"), qty, unit_price, to_num(it.get("carton_count", 0), "carton_count", 0), it.get("line_note", "")),
+                            )
+                            conn.execute(
+                                "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                                (product_id, "PURCHASE_IN", "PURCHASE", pid, qty, unit_price, now_iso(), f"采购入库 {current['purchase_no']}", now_iso()),
+                            )
+
+                    new_status = validate_doc_status(data.get("status", current_status))
+                    if new_status == "VOIDED" and current_status != "VOIDED":
+                        existed = conn.execute(
+                            "SELECT 1 FROM inventory_movements WHERE ref_type='VOID_PURCHASE' AND ref_id=? LIMIT 1",
+                            (pid,),
+                        ).fetchone()
+                        if not existed:
+                            po_items = conn.execute(
+                                "SELECT product_id, quantity, unit_price FROM purchase_order_items WHERE purchase_order_id=?",
+                                (pid,),
+                            ).fetchall()
+                            now = now_iso()
+                            for it in po_items:
+                                conn.execute(
+                                    "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                                    (it["product_id"], "ADJUST_OUT", "VOID_PURCHASE", pid, it["quantity"], it["unit_price"], now, f"作废冲销采购单 {current['purchase_no']}", now),
+                                )
+
                     conn.execute(
                         "UPDATE purchase_orders SET status=?,currency=?,eta=?,port=?,payment_term=?,transport_mode=?,note=? WHERE id=?",
-                        (validate_doc_status(data.get("status", "DRAFT")), data.get("currency", "USD"), data.get("eta", ""), data.get("port", ""), data.get("payment_term", ""), data.get("transport_mode", ""), data.get("note", ""), pid),
+                        (
+                            new_status,
+                            data.get("currency", current["currency"]),
+                            data.get("eta", current["eta"]),
+                            data.get("port", current["port"]),
+                            data.get("payment_term", current["payment_term"]),
+                            data.get("transport_mode", current["transport_mode"]),
+                            data.get("note", current["note"]),
+                            pid,
+                        ),
                     )
                     conn.commit()
                 return self.ok({"message": "采购单更新成功"})
@@ -616,9 +698,65 @@ class AppHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/orders/"):
                 oid = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
+                    current = conn.execute("SELECT * FROM sales_orders WHERE id=?", (oid,)).fetchone()
+                    if not current:
+                        return self.err("销售单不存在", 404)
+                    current_status = str(current["status"])
+                    ensure_doc_editable(current_status)
+                    ensure_saved_items_readonly(current_status, data)
+
+                    items = data.get("items")
+                    if items is not None:
+                        if not isinstance(items, list) or not items:
+                            raise ValueError("销售单 items 不能为空")
+                        conn.execute("DELETE FROM sales_order_items WHERE sales_order_id=?", (oid,))
+                        conn.execute("DELETE FROM inventory_movements WHERE ref_type='SALES' AND ref_id=?", (oid,))
+                        for it in items:
+                            qty = to_num(it.get("quantity"), "quantity", 0.0001)
+                            unit_price = to_num(it.get("unit_price", 0), "unit_price", 0)
+                            product_id = int(it.get("product_id"))
+                            if qty > stock_available(conn, product_id):
+                                raise ValueError(f"商品ID {product_id} 库存不足")
+                            conn.execute(
+                                "INSERT INTO sales_order_items(sales_order_id,product_id,spec_snapshot,unit,quantity,unit_price,carton_no,line_note) VALUES(?,?,?,?,?,?,?,?)",
+                                (oid, product_id, it.get("spec_snapshot", ""), it.get("unit", "PCS"), qty, unit_price, it.get("carton_no", ""), it.get("line_note", "")),
+                            )
+                            conn.execute(
+                                "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                                (product_id, "SALES_OUT", "SALES", oid, qty, unit_price, now_iso(), f"销售出库 {current['sales_no']}", now_iso()),
+                            )
+
+                    new_status = validate_doc_status(data.get("status", current_status))
+                    if new_status == "VOIDED" and current_status != "VOIDED":
+                        existed = conn.execute(
+                            "SELECT 1 FROM inventory_movements WHERE ref_type='VOID_SALES' AND ref_id=? LIMIT 1",
+                            (oid,),
+                        ).fetchone()
+                        if not existed:
+                            so_items = conn.execute(
+                                "SELECT product_id, quantity, unit_price FROM sales_order_items WHERE sales_order_id=?",
+                                (oid,),
+                            ).fetchall()
+                            now = now_iso()
+                            for it in so_items:
+                                conn.execute(
+                                    "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                                    (it["product_id"], "ADJUST_IN", "VOID_SALES", oid, it["quantity"], it["unit_price"], now, f"作废冲销销售单 {current['sales_no']}", now),
+                                )
+
                     conn.execute(
                         "UPDATE sales_orders SET status=?,currency=?,port=?,etd=?,payment_term=?,transport_mode=?,shipping_mark=?,note=? WHERE id=?",
-                        (validate_doc_status(data.get("status", "DRAFT")), data.get("currency", "USD"), data.get("port", ""), data.get("etd", ""), data.get("payment_term", ""), data.get("transport_mode", ""), data.get("shipping_mark", ""), data.get("note", ""), oid),
+                        (
+                            new_status,
+                            data.get("currency", current["currency"]),
+                            data.get("port", current["port"]),
+                            data.get("etd", current["etd"]),
+                            data.get("payment_term", current["payment_term"]),
+                            data.get("transport_mode", current["transport_mode"]),
+                            data.get("shipping_mark", current["shipping_mark"]),
+                            data.get("note", current["note"]),
+                            oid,
+                        ),
                     )
                     conn.commit()
                 return self.ok({"message": "销售单更新成功"})
