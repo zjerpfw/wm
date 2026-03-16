@@ -1,0 +1,2 @@
+# Zero external dependencies required for backend runtime.
+# Uses Python standard library only.
