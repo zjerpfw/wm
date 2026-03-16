@@ -10,6 +10,14 @@ WM V1：后端 + SQLite 真数据进销存系统。
 - PUT 更新单据时避免重复写库存流水（作废冲销幂等）。
 - 库存流水增加来源字段：`ref_type`、`ref_id`、`ref_no`。
 
+## V1.1（箱号装箱模块）
+
+本阶段新增：
+- `shipments` 发货单（可从销售单创建）。
+- `shipment_boxes` 箱表（同一 `shipment_id` 下 `box_no` 唯一）。
+- `shipment_box_items` 箱内商品明细。
+- 支持按箱录入商品数量，并自动汇总总箱数、总数量、总毛重、总体积。
+
 ## V1.0.1（稳定收口）
 
 本阶段完成：
@@ -52,6 +60,11 @@ python3 -m http.server 5500 -d frontend
   - `PUT /api/customers/{id}`
   - `GET/POST /api/suppliers`
   - `PUT /api/suppliers/{id}`
+- 业务单据：
+  - `GET/POST /api/shipments`
+  - `GET /api/shipments/{id}`
+  - `POST /api/shipments/{id}/boxes`
+  - `POST /api/shipments/{id}/boxes/{box_id}/items`
 - 业务单据：
   - `GET/POST /api/purchases`
   - `PUT /api/purchases/{id}`
