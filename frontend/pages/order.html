@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>销售订单</title><link rel="stylesheet" href="../style.css"></head><body>
+<div class="top"><a href="../index.html">← 首页</a>销售订单</div>
+<div class="wrap"><div class="card"><h2>订单录入</h2><div class="hint">客户下拉来自客户主数据；订单行 SKU 下拉来自商品主数据。</div>
+<table><thead><tr><th>客户</th><th>客户PO</th><th>订单行(每行: SKU,数量)</th></tr></thead><tbody><tr>
+<td><select id="customerSelect"></select></td><td><input id="customer_po" value="PO-2026-001"></td><td><textarea id="lines">SKU-RED-M,100</textarea></td>
+</tr></tbody></table>
+<div class="actions"><button onclick="submitOrder()">提交订单</button><button class="secondary" onclick="loadRefs()">刷新基础资料</button><button class="secondary" onclick="loadOrders()">刷新订单列表</button></div>
+<div id="ordersTable"></div></div>
+<div class="card"><h2>接口结果</h2><pre id="result">等待操作...</pre></div></div>
+<script src="../app.js"></script>
+<script>
+const {api,fetchCustomers,fetchOrders,fillSelect,renderTable}=window.WM;
+function parseLines(){return document.getElementById('lines').value.split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{const [sku,qty]=line.split(',').map(s=>s.trim());return {sku,qty:Number(qty)}})}
+async function loadRefs(){const customers=await fetchCustomers();fillSelect('customerSelect',customers,'id','customer_name')}
+async function submitOrder(){await api('/api/orders',{method:'POST',body:JSON.stringify({customer_id:Number(document.getElementById('customerSelect').value),customer_po:document.getElementById('customer_po').value.trim(),lines:parseLines()})});await loadOrders();}
+async function loadOrders(){const rows=await fetchOrders();renderTable('ordersTable',['id','customer_name','customer_po','created_at'],rows)}
+loadRefs();loadOrders();
+</script>
+</body></html>
