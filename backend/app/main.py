@@ -339,9 +339,10 @@ def ensure_shipment_editable(current_status: str) -> None:
 def get_shipment_header(conn: sqlite3.Connection, shipment_id: int) -> sqlite3.Row | None:
     return conn.execute(
         """
-        SELECT sh.*, so.sales_no
+        SELECT sh.*, so.sales_no, so.customer_id, c.name AS customer_name
         FROM shipments sh
         JOIN sales_orders so ON so.id=sh.sales_order_id
+        JOIN customers c ON c.id=so.customer_id
         WHERE sh.id=?
         """,
         (shipment_id,),
@@ -354,6 +355,7 @@ def get_shipment_totals(conn: sqlite3.Connection, shipment_id: int) -> dict[str,
         SELECT
           COALESCE(COUNT(*), 0) AS total_boxes,
           COALESCE(SUM(gross_weight), 0) AS total_gross_weight,
+          COALESCE(SUM(net_weight), 0) AS total_net_weight,
           COALESCE(SUM(volume), 0) AS total_volume
         FROM shipment_boxes
         WHERE shipment_id=?
@@ -373,6 +375,7 @@ def get_shipment_totals(conn: sqlite3.Connection, shipment_id: int) -> dict[str,
         "total_boxes": float(row["total_boxes"]),
         "total_qty": float(qty_row["total_qty"]),
         "total_gross_weight": float(row["total_gross_weight"]),
+        "total_net_weight": float(row["total_net_weight"]),
         "total_volume": float(row["total_volume"]),
     }
 
@@ -566,6 +569,49 @@ def build_shipment_create_items(
             }
         )
     return shipment_items
+
+
+def get_packing_list_data(conn: sqlite3.Connection, shipment_id: int) -> dict[str, Any]:
+    header = get_shipment_header(conn, shipment_id)
+    if not header:
+        raise ValueError("发货单不存在")
+    boxes = get_shipment_boxes(conn, shipment_id)
+    summary_rows = conn.execute(
+        """
+        SELECT
+          sbi.product_id,
+          p.product_code,
+          p.name AS product_name,
+          COALESCE(SUM(sbi.qty), 0) AS total_qty
+        FROM shipment_box_items sbi
+        JOIN shipment_boxes sb ON sb.id=sbi.shipment_box_id
+        JOIN products p ON p.id=sbi.product_id
+        WHERE sb.shipment_id=?
+        GROUP BY sbi.product_id, p.product_code, p.name
+        ORDER BY p.product_code ASC, p.id ASC
+        """,
+        (shipment_id,),
+    ).fetchall()
+    summary_by_product = []
+    for row in summary_rows:
+        item = dict(row)
+        item["total_qty"] = float(item["total_qty"])
+        summary_by_product.append(item)
+    totals = get_shipment_totals(conn, shipment_id)
+    return {
+        "header": {
+            **dict(header),
+            "shipment_date": header["created_at"],
+        },
+        "boxes": boxes,
+        "summary_by_product": summary_by_product,
+        "totals": {
+            "total_boxes": totals["total_boxes"],
+            "total_gross_weight": totals["total_gross_weight"],
+            "total_net_weight": totals["total_net_weight"],
+            "total_volume": totals["total_volume"],
+        },
+    }
 
 
 def validate_shipment_box_item(
@@ -885,6 +931,13 @@ class AppHandler(BaseHTTPRequestHandler):
                             "totals": get_shipment_totals(conn, sid),
                         }
                     )
+
+            if path.startswith("/api/shipments/") and path.endswith("/packing-list"):
+                sid = int(path.split("/")[-2])
+                with closing(get_conn()) as conn:
+                    if not get_shipment_header(conn, sid):
+                        return self.err("发货单不存在", 404)
+                    return self.ok(get_packing_list_data(conn, sid))
 
             if path.startswith("/api/shipments/"):
                 sid = int(path.split("/")[-1])

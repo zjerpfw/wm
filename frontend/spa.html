@@ -10,6 +10,20 @@
     .top { background:#0f172a; color:#fff; padding:12px 16px; font-weight:600; }
     .main { padding:14px; }
     .toolbar { display:flex; gap:8px; margin:8px 0; }
+    .packing-page { max-width:1100px; margin:0 auto; }
+    .packing-card { background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 10px rgba(15, 23, 42, 0.08); }
+    .packing-title { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; }
+    .packing-title h2 { margin:0; }
+    .packing-box { border:1px solid #dcdfe6; border-radius:6px; padding:12px; margin-bottom:12px; }
+    .packing-box-head { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:8px; font-weight:600; }
+    .packing-warning { margin:12px 0; padding:10px 12px; border-radius:6px; background:#fef0f0; color:#c45656; border:1px solid #fbc4c4; }
+    @media print {
+      body { background:#fff; }
+      .top, .packing-actions, .el-button { display:none !important; }
+      .main { padding:0; }
+      .packing-card { box-shadow:none; border:none; padding:0; }
+      .packing-box { break-inside:avoid; page-break-inside:avoid; }
+    }
   </style>
 </head>
 <body>
@@ -18,8 +32,8 @@
 <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
 <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
 <script>
-const { createApp, reactive, ref } = Vue;
-const { createRouter, createWebHashHistory } = VueRouter;
+const { createApp, reactive, ref, watch } = Vue;
+const { createRouter, createWebHashHistory, useRoute, useRouter } = VueRouter;
 const API = 'http://127.0.0.1:8000';
 const statuses = ['DRAFT','SAVED','VOIDED'];
 
@@ -200,9 +214,12 @@ const Shipment = {
       const item = current.value.items.find(x=>x.id===shipmentItemId);
       return item ? `${item.product_code} / ${item.product_name}` : '';
     };
+    const openPackingList = (id)=>{
+      window.location.hash = `#/shipment-packing-list?id=${id}`;
+    };
 
     loadRef();
-    return { orders, products, docs, current, selectedOrder, shipmentLimitEnabled, createForm, createItems, boxForm, itemForm, shipmentForm, loadRef, loadOrderForCreate, updateShipmentLimit, openDoc, createShipment, saveShipment, saveBox, editBox, deleteBox, saveItem, editItem, deleteItem, resetBoxForm, resetItemForm, readonly, remainingQty, itemLabel };
+    return { orders, products, docs, current, selectedOrder, shipmentLimitEnabled, createForm, createItems, boxForm, itemForm, shipmentForm, loadRef, loadOrderForCreate, updateShipmentLimit, openDoc, openPackingList, createShipment, saveShipment, saveBox, editBox, deleteBox, saveItem, editItem, deleteItem, resetBoxForm, resetItemForm, readonly, remainingQty, itemLabel };
   },
   template:`<el-card><h3>发货装箱</h3>
   <el-divider content-position='left'>从销售单创建发货单</el-divider>
@@ -222,7 +239,7 @@ const Shipment = {
       </template>
     </el-table-column>
   </el-table>
-  <el-table :data='docs' border size='small'><el-table-column prop='shipment_no' label='发货单号'/><el-table-column prop='sales_no' label='销售单号'/><el-table-column prop='total_boxes' label='总箱数'/><el-table-column prop='total_qty' label='总数量'/><el-table-column prop='total_gross_weight' label='总毛重'/><el-table-column prop='total_volume' label='总体积'/><el-table-column label='操作' width='90'><template #default='s'><el-button link type='primary' @click='openDoc(s.row.id)'>打开</el-button></template></el-table-column></el-table>
+  <el-table :data='docs' border size='small'><el-table-column prop='shipment_no' label='发货单号'/><el-table-column prop='sales_no' label='销售单号'/><el-table-column prop='total_boxes' label='总箱数'/><el-table-column prop='total_qty' label='总数量'/><el-table-column prop='total_gross_weight' label='总毛重'/><el-table-column prop='total_volume' label='总体积'/><el-table-column label='操作' width='160'><template #default='s'><el-button link type='primary' @click='openDoc(s.row.id)'>打开</el-button><el-button link type='success' @click='openPackingList(s.row.id)'>Packing List</el-button></template></el-table-column></el-table>
 
   <div v-if='current' style='margin-top:12px'>
     <el-descriptions border :column='5'>
@@ -230,9 +247,9 @@ const Shipment = {
       <el-descriptions-item label='销售单'>{{current.header.sales_no}}</el-descriptions-item>
       <el-descriptions-item label='状态'><el-select v-model='shipmentForm.status' :disabled='current.header.status==="VOIDED"' style='width:120px'><el-option label='DRAFT' value='DRAFT'/><el-option label='SAVED' value='SAVED'/><el-option label='VOIDED' value='VOIDED'/></el-select></el-descriptions-item>
       <el-descriptions-item label='备注'><el-input v-model='shipmentForm.note' :disabled='readonly()'/></el-descriptions-item>
-      <el-descriptions-item label='操作'><el-button type='primary' @click='saveShipment'>保存发货单</el-button></el-descriptions-item>
+      <el-descriptions-item label='操作'><el-button type='primary' @click='saveShipment'>保存发货单</el-button><el-button style='margin-left:8px' @click='openPackingList(current.header.id)'>Packing List</el-button></el-descriptions-item>
     </el-descriptions>
-    <div class='toolbar' style='margin-top:8px'><el-tag>总箱数 {{current.totals.total_boxes}}</el-tag><el-tag>总数量 {{current.totals.total_qty}}</el-tag><el-tag>总毛重 {{current.totals.total_gross_weight}}</el-tag><el-tag>总体积 {{current.totals.total_volume}}</el-tag></div>
+    <div class='toolbar' style='margin-top:8px'><el-tag>总箱数 {{current.totals.total_boxes}}</el-tag><el-tag>总数量 {{current.totals.total_qty}}</el-tag><el-tag>总毛重 {{current.totals.total_gross_weight}}</el-tag><el-tag>总净重 {{current.totals.total_net_weight}}</el-tag><el-tag>总体积 {{current.totals.total_volume}}</el-tag></div>
     <el-divider content-position='left'>发货明细</el-divider>
     <el-table :data='current.items' border>
       <el-table-column prop='product_code' label='商品编码'/>
@@ -293,6 +310,91 @@ const Shipment = {
   </el-card>`
 };
 
+const PackingList = {
+  setup(){
+    const route = useRoute();
+    const router = useRouter();
+    const packing = ref(null);
+    const loading = ref(false);
+    const load = async()=>{
+      const id = route.query.id;
+      if(!id){
+        packing.value = null;
+        return;
+      }
+      try{
+        loading.value = true;
+        packing.value = await request(`/api/shipments/${id}/packing-list`);
+      }catch(e){ msgErr(e); }
+      finally{ loading.value = false; }
+    };
+    const doPrint = ()=>window.print();
+    const backToShipments = ()=>router.push('/shipment');
+    watch(()=>route.query.id, load, { immediate:true });
+    return { packing, loading, doPrint, backToShipments };
+  },
+  template:`<div class='packing-page'>
+  <div class='packing-card' v-loading='loading'>
+    <div class='packing-title'>
+      <div>
+        <h2>Packing List / 箱单</h2>
+        <div v-if='packing'>发货单号：{{packing.header.shipment_no}}</div>
+      </div>
+      <div class='packing-actions'>
+        <el-button @click='backToShipments'>返回发货装箱</el-button>
+        <el-button type='primary' @click='doPrint'>打印</el-button>
+      </div>
+    </div>
+    <div v-if='!packing'><el-empty description='请选择发货单后再预览 Packing List'/></div>
+    <template v-else>
+      <div v-if='packing.header.status==="VOIDED"' class='packing-warning'>该发货单已作废（VOIDED），当前箱单仅供查看，不作为正式 Packing List。</div>
+      <el-card shadow='never'>
+        <template #header>Header</template>
+        <el-descriptions border :column='2'>
+          <el-descriptions-item label='发货单号'>{{packing.header.shipment_no}}</el-descriptions-item>
+          <el-descriptions-item label='发货日期'>{{packing.header.shipment_date}}</el-descriptions-item>
+          <el-descriptions-item label='客户名称'>{{packing.header.customer_name}}</el-descriptions-item>
+          <el-descriptions-item label='状态'>{{packing.header.status}}</el-descriptions-item>
+          <el-descriptions-item label='备注' :span='2'>{{packing.header.note || '-'}}</el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+      <el-card shadow='never' style='margin-top:12px'>
+        <template #header>Box Details</template>
+        <div v-if='!packing.boxes.length'><el-empty description='当前发货单暂无箱信息'/></div>
+        <div v-for='box in packing.boxes' :key='box.id' class='packing-box'>
+          <div class='packing-box-head'>
+            <span>箱号：{{box.box_no}}</span>
+            <span>尺寸：{{box.box_length}} × {{box.box_width}} × {{box.box_height}}</span>
+            <span>毛重：{{box.gross_weight}}</span>
+            <span>净重：{{box.net_weight}}</span>
+            <span>体积：{{box.volume}}</span>
+          </div>
+          <el-table :data='box.items' border size='small'>
+            <el-table-column prop='product_code' label='商品编码'/>
+            <el-table-column prop='product_name' label='商品名称'/>
+            <el-table-column prop='qty' label='数量'/>
+          </el-table>
+        </div>
+      </el-card>
+      <el-card shadow='never' style='margin-top:12px'>
+        <template #header>Summary</template>
+        <el-table :data='packing.summary_by_product' border size='small'>
+          <el-table-column prop='product_code' label='商品编码'/>
+          <el-table-column prop='product_name' label='商品名称'/>
+          <el-table-column prop='total_qty' label='汇总数量'/>
+        </el-table>
+        <div class='toolbar' style='margin-top:12px'>
+          <el-tag>总箱数 {{packing.totals.total_boxes}}</el-tag>
+          <el-tag>总毛重 {{packing.totals.total_gross_weight}}</el-tag>
+          <el-tag>总净重 {{packing.totals.total_net_weight}}</el-tag>
+          <el-tag>总体积 {{packing.totals.total_volume}}</el-tag>
+        </div>
+      </el-card>
+    </template>
+  </div>
+  </div>`
+};
+
 const routes = [
   { path:'/', redirect:'/base-data' },
   { path:'/base-data', component: BaseData },
@@ -300,6 +402,7 @@ const routes = [
   { path:'/sales', component: Sales },
   { path:'/inventory', component: Inventory },
   { path:'/shipment', component: Shipment },
+  { path:'/shipment-packing-list', component: PackingList },
 ];
 const router = createRouter({ history:createWebHashHistory(), routes });
 

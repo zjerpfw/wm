@@ -116,6 +116,10 @@ class InventoryTimingIntegrationTest(unittest.TestCase):
     def set_shipment_limit(self, enabled):
         self.request('/api/settings/shipment-limit', 'PUT', {'enabled': enabled})
 
+    def packing_list(self, shipment_id):
+        payload = self.request(f'/api/shipments/{shipment_id}/packing-list')
+        return payload['data']
+
     def test_inventory_moves_only_on_shipment_status_transitions(self):
         self.assertEqual(self.inventory_on_hand(), 10.0)
 
@@ -291,6 +295,42 @@ class InventoryTimingIntegrationTest(unittest.TestCase):
         order_items = self.order_items(order_id)
         self.assertEqual(order_items[0]['shipped_qty'], 7.0)
         self.assertEqual(order_items[0]['remaining_to_ship'], 0.0)
+
+    def test_packing_list_returns_header_boxes_summary_and_voided_status(self):
+        order_id = self.create_sales_order('SO-PL', 6)
+        shipment_id = self.create_shipment(order_id, 'SH-PL')
+        shipment_item_id = self.shipment_item_id(shipment_id)
+        box1_id = int(
+            self.request(f'/api/shipments/{shipment_id}/boxes', 'POST', {'box_no': '1', 'gross_weight': 2.5, 'net_weight': 2.0, 'volume': 0.5})['data']['id']
+        )
+        box2_id = int(
+            self.request(f'/api/shipments/{shipment_id}/boxes', 'POST', {'box_no': '2', 'gross_weight': 3.5, 'net_weight': 3.0, 'volume': 0.7})['data']['id']
+        )
+        self.request(f'/api/shipments/{shipment_id}/boxes/{box1_id}/items', 'POST', {'shipment_item_id': shipment_item_id, 'qty': 2})
+        self.request(f'/api/shipments/{shipment_id}/boxes/{box2_id}/items', 'POST', {'shipment_item_id': shipment_item_id, 'qty': 4})
+
+        packing = self.packing_list(shipment_id)
+        self.assertEqual(packing['header']['shipment_no'], 'SH-PL')
+        self.assertEqual(packing['header']['customer_name'], 'Cust1')
+        self.assertEqual(packing['header']['status'], 'DRAFT')
+        self.assertTrue(packing['header']['shipment_date'])
+        self.assertEqual(len(packing['boxes']), 2)
+        self.assertEqual(packing['boxes'][0]['box_no'], '1')
+        self.assertEqual(packing['boxes'][0]['items'][0]['product_code'], 'P1')
+        self.assertEqual(packing['summary_by_product'][0]['product_code'], 'P1')
+        self.assertEqual(packing['summary_by_product'][0]['total_qty'], 6.0)
+        self.assertEqual(packing['totals']['total_boxes'], 2.0)
+        self.assertEqual(packing['totals']['total_gross_weight'], 6.0)
+        self.assertEqual(packing['totals']['total_net_weight'], 5.0)
+        self.assertEqual(packing['totals']['total_volume'], 1.2)
+
+        self.request(
+            f'/api/shipments/{shipment_id}',
+            'PUT',
+            {'shipment_no': 'SH-PL', 'status': 'VOIDED'},
+        )
+        voided_packing = self.packing_list(shipment_id)
+        self.assertEqual(voided_packing['header']['status'], 'VOIDED')
 
 
 if __name__ == '__main__':

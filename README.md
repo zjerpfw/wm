@@ -33,6 +33,15 @@ wm 外贸订单与库存系统，当前为 **Web SPA + Python + SQLite 真数据
 - 建箱 / 改箱本身不直接写库存流水。
 - 库存扣减时点已切换为：`发货单 DRAFT -> SAVED` 才扣库存；`SAVED -> VOIDED` 才回补库存。
 
+## V1.2 Packing List / 箱单（第一版）
+
+- 以单张发货单为单位生成 Packing List。
+- 支持页面预览与浏览器打印。
+- Header 至少显示：`shipment_no`、`shipment_date`、`customer_name`、`note`。
+- Box Details 按箱显示：`box_no`、尺寸、毛重、净重、体积，以及每箱商品明细。
+- Summary 按商品汇总显示总数量，并展示总箱数、总毛重、总净重、总体积。
+- `VOIDED` 发货单仍可预览，但页面会明确显示“已作废 / VOIDED，仅供查看”。
+
 ## SQLite 文件位置与备份
 
 - 默认数据库文件：`backend/wm.db`。
@@ -74,6 +83,7 @@ python3 -m unittest discover -s tests -v
 - `inventory_movements` 中 `SHIPMENT / VOID_SHIPMENT` 的 `ref_type / ref_id / ref_no` 追溯正确。
 - 同一销售单可拆成多张发货单，且在开启控制参数时累计发货数量不允许超量。
 - 发货单作废后会释放销售单的 `remaining_to_ship`。
+- Packing List 可从发货单列表或发货单详情页进入，并支持浏览器打印预览。
 
 ## API 概览
 
@@ -97,6 +107,7 @@ python3 -m unittest discover -s tests -v
   - `GET/POST /api/shipments`
   - `GET /api/shipments/{id}`
   - `GET /api/shipments/{id}/summary`
+  - `GET /api/shipments/{id}/packing-list`
   - `PUT /api/shipments/{id}`
   - `POST /api/shipments/{id}/boxes`
   - `PUT /api/shipments/{id}/boxes/{box_id}`
@@ -123,3 +134,7 @@ python3 -m unittest discover -s tests -v
 10. 将发货单改为 `SAVED`，确认库存减少且箱与箱内商品不可再编辑。
 11. 再把发货单改为 `VOIDED`，确认库存回补。
 12. 尝试删除非空箱，确认后端阻止删除并返回中文提示。
+13. 点击发货单列表或详情中的 `Packing List` 入口。
+14. 检查 Header / Box Details / Summary 三块内容是否正确。
+15. 打开浏览器打印预览，确认打印版布局基本可读。
+16. 将发货单作废后再次打开 Packing List，确认页面明确显示“已作废 / VOIDED”语义。
