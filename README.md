@@ -29,6 +29,7 @@ wm 外贸订单与库存系统，当前为 **Web SPA + Python + SQLite 真数据
 - 后端校验同一发货明细的累计装箱数量不能大于发货数量。
 - 发货单 `DRAFT` 可编辑，`SAVED` 只读，`VOIDED` 不可编辑。
 - 建箱 / 改箱本身不直接写库存流水。
+- 库存扣减时点已切换为：`发货单 DRAFT -> SAVED` 才扣库存；`SAVED -> VOIDED` 才回补库存。
 
 ## SQLite 文件位置与备份
 
@@ -49,6 +50,26 @@ python3 -m http.server 5500 -d frontend
 
 访问地址：
 - `http://127.0.0.1:5500/spa.html`
+
+## 自动化测试
+
+当前仓库已提供库存时点与发货追溯的后端集成测试，使用 Python 标准库 `unittest`，无需额外安装重型测试框架。
+
+一条命令运行：
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+覆盖重点：
+- 采购入库后库存增加。
+- 销售单保存不减库存。
+- 发货单 `DRAFT` 不减库存，`DRAFT -> SAVED` 才扣库存。
+- 装箱增删改本身不影响库存。
+- 发货单 `SAVED -> VOIDED` 才回补库存。
+- 重复 `SAVED` / 重复 `VOIDED` 不重复记账。
+- `DRAFT -> VOIDED` 不回冲未发生库存。
+- `inventory_movements` 中 `SHIPMENT / VOID_SHIPMENT` 的 `ref_type / ref_id / ref_no` 追溯正确。
 
 ## API 概览
 
@@ -86,9 +107,12 @@ python3 -m http.server 5500 -d frontend
 1. 新建商品、客户、供应商。
 2. 创建采购单补库存。
 3. 创建销售单。
-4. 在“发货装箱”页面从销售单创建发货单。
-5. 新增多个箱，并在不同箱中录入同一个发货明细商品。
-6. 验证发货明细中的 `shipment_qty / boxed_qty / remaining_qty` 是否正确。
-7. 故意让累计装箱量超过发货量，确认后端返回中文报错。
-8. 将发货单改为 `SAVED`，确认箱与箱内商品不可再编辑。
-9. 尝试删除非空箱，确认后端阻止删除并返回中文提示。
+4. 确认“销售单保存后库存不减少”。
+5. 在“发货装箱”页面从销售单创建发货单。
+6. 发货单保持 `DRAFT`，确认库存仍不变化。
+7. 新增多个箱，并在不同箱中录入同一个发货明细商品。
+8. 验证发货明细中的 `shipment_qty / boxed_qty / remaining_qty` 是否正确。
+9. 故意让累计装箱量超过发货量，确认后端返回中文报错。
+10. 将发货单改为 `SAVED`，确认库存减少且箱与箱内商品不可再编辑。
+11. 再把发货单改为 `VOIDED`，确认库存回补。
+12. 尝试删除非空箱，确认后端阻止删除并返回中文提示。

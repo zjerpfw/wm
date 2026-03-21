@@ -451,6 +451,103 @@ def validate_shipment_box_item(
     return shipment_item
 
 
+def shipment_inventory_written(conn: sqlite3.Connection, shipment_id: int, ref_type: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM inventory_movements WHERE ref_type=? AND ref_id=? LIMIT 1",
+        (ref_type, shipment_id),
+    ).fetchone()
+    return row is not None
+
+
+def apply_shipment_inventory(conn: sqlite3.Connection, shipment_id: int) -> None:
+    if shipment_inventory_written(conn, shipment_id, "SHIPMENT"):
+        return
+    product_rows = conn.execute(
+        """
+        SELECT product_id, SUM(quantity) AS total_qty
+        FROM shipment_items
+        WHERE shipment_id=?
+        GROUP BY product_id
+        """,
+        (shipment_id,),
+    ).fetchall()
+    for row in product_rows:
+        available = stock_available(conn, int(row["product_id"]))
+        if float(row["total_qty"]) > available + 1e-9:
+            raise ValueError(f"商品ID {row['product_id']} 库存不足")
+    shipment = get_shipment_header(conn, shipment_id)
+    if not shipment:
+        raise ValueError("发货单不存在")
+    items = conn.execute(
+        """
+        SELECT *
+        FROM shipment_items
+        WHERE shipment_id=?
+        ORDER BY id ASC
+        """,
+        (shipment_id,),
+    ).fetchall()
+    now = now_iso()
+    for item in items:
+        conn.execute(
+            """
+            INSERT INTO inventory_movements(
+              product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                item["product_id"],
+                "SALES_OUT",
+                "SHIPMENT",
+                shipment_id,
+                item["quantity"],
+                item["unit_price"],
+                now,
+                f"发货出库 {shipment['shipment_no']}",
+                now,
+            ),
+        )
+
+
+def reverse_shipment_inventory(conn: sqlite3.Connection, shipment_id: int) -> None:
+    if shipment_inventory_written(conn, shipment_id, "VOID_SHIPMENT"):
+        return
+    if not shipment_inventory_written(conn, shipment_id, "SHIPMENT"):
+        return
+    shipment = get_shipment_header(conn, shipment_id)
+    if not shipment:
+        raise ValueError("发货单不存在")
+    items = conn.execute(
+        """
+        SELECT *
+        FROM shipment_items
+        WHERE shipment_id=?
+        ORDER BY id ASC
+        """,
+        (shipment_id,),
+    ).fetchall()
+    now = now_iso()
+    for item in items:
+        conn.execute(
+            """
+            INSERT INTO inventory_movements(
+              product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                item["product_id"],
+                "ADJUST_IN",
+                "VOID_SHIPMENT",
+                shipment_id,
+                item["quantity"],
+                item["unit_price"],
+                now,
+                f"作废回冲发货单 {shipment['shipment_no']}",
+                now,
+            ),
+        )
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "WMV1/1.0.2"
 
@@ -692,12 +789,14 @@ class AppHandler(BaseHTTPRequestHandler):
                           CASE
                             WHEN m.ref_type IN ('PURCHASE','VOID_PURCHASE') THEN po.purchase_no
                             WHEN m.ref_type IN ('SALES','VOID_SALES') THEN so.sales_no
+                            WHEN m.ref_type IN ('SHIPMENT','VOID_SHIPMENT') THEN sh.shipment_no
                             ELSE ''
                           END AS ref_no
                         FROM inventory_movements m
                         JOIN products p ON p.id=m.product_id
                         LEFT JOIN purchase_orders po ON po.id=m.ref_id
                         LEFT JOIN sales_orders so ON so.id=m.ref_id
+                        LEFT JOIN shipments sh ON sh.id=m.ref_id
                         ORDER BY m.id DESC
                         """
                     ).fetchall()
@@ -854,15 +953,9 @@ class AppHandler(BaseHTTPRequestHandler):
                         product_id = int(it.get("product_id"))
                         qty = to_num(it.get("quantity"), "quantity", 0.0001)
                         unit_price = to_num(it.get("unit_price", 0), "unit_price", 0)
-                        if qty > stock_available(conn, product_id):
-                            raise ValueError(f"商品ID {product_id} 库存不足")
                         cur.execute(
                             "INSERT INTO sales_order_items(sales_order_id,product_id,spec_snapshot,unit,quantity,unit_price,carton_no,line_note) VALUES(?,?,?,?,?,?,?,?)",
                             (so_id, product_id, it.get("spec_snapshot", ""), it.get("unit", "PCS"), qty, unit_price, it.get("carton_no", ""), it.get("line_note", "")),
-                        )
-                        cur.execute(
-                            "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                            (product_id, "SALES_OUT", "SALES", so_id, qty, unit_price, now, f"销售出库 {data.get('sales_no', '')}", now),
                         )
                     conn.commit()
                 return self.ok({"message": "销售单创建成功", "id": so_id})
@@ -1140,40 +1233,16 @@ class AppHandler(BaseHTTPRequestHandler):
                         if not isinstance(items, list) or not items:
                             raise ValueError("销售单 items 不能为空")
                         conn.execute("DELETE FROM sales_order_items WHERE sales_order_id=?", (oid,))
-                        conn.execute("DELETE FROM inventory_movements WHERE ref_type='SALES' AND ref_id=?", (oid,))
                         for it in items:
                             qty = to_num(it.get("quantity"), "quantity", 0.0001)
                             unit_price = to_num(it.get("unit_price", 0), "unit_price", 0)
                             product_id = int(it.get("product_id"))
-                            if qty > stock_available(conn, product_id):
-                                raise ValueError(f"商品ID {product_id} 库存不足")
                             conn.execute(
                                 "INSERT INTO sales_order_items(sales_order_id,product_id,spec_snapshot,unit,quantity,unit_price,carton_no,line_note) VALUES(?,?,?,?,?,?,?,?)",
                                 (oid, product_id, it.get("spec_snapshot", ""), it.get("unit", "PCS"), qty, unit_price, it.get("carton_no", ""), it.get("line_note", "")),
                             )
-                            conn.execute(
-                                "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                                (product_id, "SALES_OUT", "SALES", oid, qty, unit_price, now_iso(), f"销售出库 {current['sales_no']}", now_iso()),
-                            )
 
                     new_status = validate_doc_status(data.get("status", current_status))
-                    if new_status == "VOIDED" and current_status != "VOIDED":
-                        existed = conn.execute(
-                            "SELECT 1 FROM inventory_movements WHERE ref_type='VOID_SALES' AND ref_id=? LIMIT 1",
-                            (oid,),
-                        ).fetchone()
-                        if not existed:
-                            so_items = conn.execute(
-                                "SELECT product_id, quantity, unit_price FROM sales_order_items WHERE sales_order_id=?",
-                                (oid,),
-                            ).fetchall()
-                            now = now_iso()
-                            for it in so_items:
-                                conn.execute(
-                                    "INSERT INTO inventory_movements(product_id,movement_type,ref_type,ref_id,quantity,unit_cost,movement_date,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                                    (it["product_id"], "ADJUST_IN", "VOID_SALES", oid, it["quantity"], it["unit_price"], now, f"作废冲销销售单 {current['sales_no']}", now),
-                                )
-
                     conn.execute(
                         "UPDATE sales_orders SET status=?,currency=?,port=?,etd=?,payment_term=?,transport_mode=?,shipping_mark=?,note=? WHERE id=?",
                         (
@@ -1286,6 +1355,10 @@ class AppHandler(BaseHTTPRequestHandler):
                     new_status = validate_doc_status(data.get("status", current_status))
                     if current_status == "SAVED" and new_status == "DRAFT":
                         raise ValueError("已保存发货单不允许改回草稿")
+                    if current_status == "DRAFT" and new_status == "SAVED":
+                        apply_shipment_inventory(conn, sid)
+                    if current_status == "SAVED" and new_status == "VOIDED":
+                        reverse_shipment_inventory(conn, sid)
                     conn.execute(
                         "UPDATE shipments SET shipment_no=?, status=?, note=? WHERE id=?",
                         (
@@ -1296,7 +1369,12 @@ class AppHandler(BaseHTTPRequestHandler):
                         ),
                     )
                     conn.commit()
-                return self.ok({"message": "发货单更新成功"})
+                message = "发货单更新成功"
+                if current_status == "DRAFT" and new_status == "SAVED":
+                    message = "发货单已保存并完成扣库存"
+                if current_status == "SAVED" and new_status == "VOIDED":
+                    message = "发货单已作废并完成库存回补"
+                return self.ok({"message": message})
 
             return self.err("接口不存在", 404)
         except sqlite3.IntegrityError as exc:
