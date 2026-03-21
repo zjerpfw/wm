@@ -1,19 +1,21 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>发货装箱</title><link rel="stylesheet" href="../style.css"></head><body>
-<div class="top"><a href="../index.html">← 首页</a>发货装箱</div>
-<div class="wrap"><div class="card"><h2>发货单录入</h2><div class="hint">订单号、SKU 均来自基础资料与业务单据联动。</div>
-<table><thead><tr><th>订单ID</th><th>发货单号</th><th>箱明细（每行: 箱码,毛重,净重,体积,SKU,数量）</th></tr></thead><tbody><tr>
-<td><select id="orderSelect"></select></td><td><input id="shipment_no" value="SHIP-001"></td><td><textarea id="boxes">BOX-001,12,10,0.07,SKU-RED-M,50</textarea></td>
-</tr></tbody></table>
-<div class="actions"><button onclick="submitShipment()">提交发货</button><button class="secondary" onclick="loadRefs()">刷新订单</button><button class="secondary" onclick="loadShipments()">刷新发货列表</button></div>
-<div id="shipmentsTable"></div></div>
-<div class="card"><h2>接口结果</h2><pre id="result">等待操作...</pre></div></div>
-<script src="../app.js"></script>
-<script>
-const {api,fetchOrders,fetchShipments,fillSelect,renderTable}=window.WM;
-function parseBoxes(){const map=new Map();document.getElementById('boxes').value.split('\n').map(x=>x.trim()).filter(Boolean).forEach(line=>{const [box_code,gross,net,volume,sku,qty]=line.split(',').map(s=>s.trim());if(!map.has(box_code)){map.set(box_code,{box_code,gross_weight_kg:Number(gross),net_weight_kg:Number(net),volume_cbm:Number(volume),items:[]});}map.get(box_code).items.push({sku,qty:Number(qty)});});return Array.from(map.values())}
-async function loadRefs(){const orders=await fetchOrders();fillSelect('orderSelect',orders,'id','id')}
-async function submitShipment(){await api('/api/shipments',{method:'POST',body:JSON.stringify({order_id:Number(document.getElementById('orderSelect').value),shipment_no:document.getElementById('shipment_no').value.trim(),boxes:parseBoxes()})});await loadShipments();}
-async function loadShipments(){const rows=await fetchShipments();renderTable('shipmentsTable',['id','shipment_no','order_id','box_count','total_gross_weight_kg','total_net_weight_kg'],rows)}
-loadRefs();loadShipments();
-</script>
-</body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>发货装箱</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="top"><a href="../index.html">← 首页</a>发货装箱</div>
+  <div class="wrap">
+    <div class="card">
+      <h2>发货装箱模块已迁移到 SPA</h2>
+      <p class="hint">为保持与当前接口一致，请直接使用单页应用中的“发货装箱”页面。</p>
+      <div class="actions">
+        <a class="button" href="../spa.html#/shipment">打开 SPA 发货装箱页</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

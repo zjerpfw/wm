@@ -1,40 +1,39 @@
 # wm
 
-WM V1：后端 + SQLite 真数据进销存系统。
+wm 外贸订单与库存系统，当前为 **Web SPA + Python + SQLite 真数据** 实现。
 
-## V1.0.2（规则收口）
+## 当前状态
 
-本阶段新增：
-- SAVED 后单据明细只读（商品/数量/单价不可改）。
-- 单据改为 VOIDED 时自动生成反向库存流水进行冲销。
-- PUT 更新单据时避免重复写库存流水（作废冲销幂等）。
-- 库存流水增加来源字段：`ref_type`、`ref_id`、`ref_no`。
+已完成模块：
+- 基础资料：商品、客户、供应商。
+- 采购入库、销售出库。
+- 库存汇总 / 库存流水。
+- V1.0.1 / V1.0.2 收口规则。
+- V1.1 发货装箱第一版。
 
-## V1.1（箱号装箱模块）
+## V1.0.2 规则说明
 
-本阶段新增：
-- `shipments` 发货单（可从销售单创建）。
-- `shipment_boxes` 箱表（同一 `shipment_id` 下 `box_no` 唯一）。
-- `shipment_box_items` 箱内商品明细。
-- 支持按箱录入商品数量，并自动汇总总箱数、总数量、总毛重、总体积。
-
-## V1.0.1（稳定收口）
-
-本阶段完成：
 - 唯一性校验：商品编码、客户编码、供应商编码、采购单号、销售单号。
-- 数值校验：数量必须大于 0，单价不能为负数。
-- 编辑能力：商品/客户/供应商支持编辑。
-- 单据状态：采购单、销售单支持 `DRAFT` / `SAVED` / `VOIDED`。
-- 列表筛选：基础资料、采购单、销售单、库存支持按关键字段搜索。
-- 库存页增强：入库总量、出库总量、当前库存、安全库存、低库存状态。
-- 错误提示统一中文。
+- 中文错误提示。
+- 采购单 / 销售单在 `SAVED` 后明细只读。
+- 采购单 / 销售单在 `VOIDED` 时自动生成反向库存流水。
+- 库存流水支持 `ref_type` / `ref_id` / `ref_no` 追溯。
 
-> 说明：退货场景（采购退货/销售退货）将在后续按“单据类型决定库存增减方向”扩展。
+## V1.1 发货装箱模块
 
-## 数据库位置与备份
+- `shipments`：发货单，可从销售单创建。
+- `shipment_items`：发货明细，创建发货单时从销售单明细快照生成。
+- `shipment_boxes`：箱信息，同一 `shipment_id` 下 `box_no` 唯一。
+- `shipment_box_items`：箱内商品明细。
+- 支持一个发货单多个箱、一个箱多个商品、同一商品拆分到多个箱。
+- 后端校验同一发货明细的累计装箱数量不能大于发货数量。
+- 发货单 `DRAFT` 可编辑，`SAVED` 只读，`VOIDED` 不可编辑。
+- 建箱 / 改箱本身不直接写库存流水。
 
-- SQLite 文件默认路径：`backend/wm.db`。
-- 建议备份方式（先停服务再复制文件）：
+## SQLite 文件位置与备份
+
+- 默认数据库文件：`backend/wm.db`。
+- 建议先停止后端再备份：
 
 ```bash
 cp backend/wm.db backend/wm.db.bak.$(date +%Y%m%d_%H%M%S)
@@ -48,29 +47,48 @@ python3 backend/app/main.py
 python3 -m http.server 5500 -d frontend
 ```
 
-浏览器访问：
+访问地址：
 - `http://127.0.0.1:5500/spa.html`
 
 ## API 概览
 
-- 主数据：
+- 主数据
   - `GET/POST /api/products`
   - `PUT /api/products/{id}`
   - `GET/POST /api/customers`
   - `PUT /api/customers/{id}`
   - `GET/POST /api/suppliers`
   - `PUT /api/suppliers/{id}`
-- 业务单据：
-  - `GET/POST /api/shipments`
-  - `GET /api/shipments/{id}`
-  - `POST /api/shipments/{id}/boxes`
-  - `POST /api/shipments/{id}/boxes/{box_id}/items`
-- 业务单据：
+- 采购 / 销售
   - `GET/POST /api/purchases`
   - `PUT /api/purchases/{id}`
   - `GET/POST /api/orders`
+  - `GET /api/orders/{id}`
   - `PUT /api/orders/{id}`
-- 库存：
+- 发货装箱
+  - `GET/POST /api/shipments`
+  - `GET /api/shipments/{id}`
+  - `GET /api/shipments/{id}/summary`
+  - `PUT /api/shipments/{id}`
+  - `POST /api/shipments/{id}/boxes`
+  - `PUT /api/shipments/{id}/boxes/{box_id}`
+  - `DELETE /api/shipments/{id}/boxes/{box_id}`
+  - `POST /api/shipments/{id}/boxes/{box_id}/items`
+  - `PUT /api/shipments/{id}/boxes/{box_id}/items/{item_id}`
+  - `DELETE /api/shipments/{id}/boxes/{box_id}/items/{item_id}`
+- 库存
   - `GET /api/inventory/summary`
   - `GET /api/inventory/movements`
   - `POST /api/inventory/adjust`
+
+## 手动测试建议
+
+1. 新建商品、客户、供应商。
+2. 创建采购单补库存。
+3. 创建销售单。
+4. 在“发货装箱”页面从销售单创建发货单。
+5. 新增多个箱，并在不同箱中录入同一个发货明细商品。
+6. 验证发货明细中的 `shipment_qty / boxed_qty / remaining_qty` 是否正确。
+7. 故意让累计装箱量超过发货量，确认后端返回中文报错。
+8. 将发货单改为 `SAVED`，确认箱与箱内商品不可再编辑。
+9. 尝试删除非空箱，确认后端阻止删除并返回中文提示。

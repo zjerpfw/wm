@@ -67,6 +67,16 @@ def validate_doc_status(status: str) -> str:
     return s
 
 
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column_name: str, column_def: str) -> None:
+    if column_name not in table_columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+
+
 def init_db() -> None:
     with closing(get_conn()) as conn:
         conn.executescript(
@@ -191,17 +201,33 @@ def init_db() -> None:
                 FOREIGN KEY (sales_order_id) REFERENCES sales_orders(id)
             );
 
+            CREATE TABLE IF NOT EXISTS shipment_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shipment_id INTEGER NOT NULL,
+                sales_order_item_id INTEGER,
+                product_id INTEGER NOT NULL,
+                spec_snapshot TEXT NOT NULL DEFAULT '',
+                unit TEXT NOT NULL DEFAULT 'PCS',
+                quantity REAL NOT NULL,
+                unit_price REAL NOT NULL DEFAULT 0,
+                remark TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (shipment_id) REFERENCES shipments(id),
+                FOREIGN KEY (sales_order_item_id) REFERENCES sales_order_items(id),
+                FOREIGN KEY (product_id) REFERENCES products(id)
+            );
+
             CREATE TABLE IF NOT EXISTS shipment_boxes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 shipment_id INTEGER NOT NULL,
                 box_no TEXT NOT NULL,
+                box_length REAL NOT NULL DEFAULT 0,
+                box_width REAL NOT NULL DEFAULT 0,
+                box_height REAL NOT NULL DEFAULT 0,
                 gross_weight REAL NOT NULL DEFAULT 0,
                 net_weight REAL NOT NULL DEFAULT 0,
-                length REAL NOT NULL DEFAULT 0,
-                width REAL NOT NULL DEFAULT 0,
-                height REAL NOT NULL DEFAULT 0,
                 volume REAL NOT NULL DEFAULT 0,
-                note TEXT NOT NULL DEFAULT '',
+                remark TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 UNIQUE (shipment_id, box_no),
                 FOREIGN KEY (shipment_id) REFERENCES shipments(id)
@@ -210,11 +236,13 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS shipment_box_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 shipment_box_id INTEGER NOT NULL,
+                shipment_item_id INTEGER NOT NULL,
                 product_id INTEGER NOT NULL,
-                quantity REAL NOT NULL,
-                note TEXT NOT NULL DEFAULT '',
+                qty REAL NOT NULL,
+                remark TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (shipment_box_id) REFERENCES shipment_boxes(id),
+                FOREIGN KEY (shipment_item_id) REFERENCES shipment_items(id),
                 FOREIGN KEY (product_id) REFERENCES products(id)
             );
 
@@ -231,8 +259,32 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (product_id) REFERENCES products(id)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_shipment_items_shipment_id ON shipment_items(shipment_id);
+            CREATE INDEX IF NOT EXISTS idx_shipment_boxes_shipment_id ON shipment_boxes(shipment_id);
+            CREATE INDEX IF NOT EXISTS idx_shipment_box_items_box_id ON shipment_box_items(shipment_box_id);
+            CREATE INDEX IF NOT EXISTS idx_shipment_box_items_shipment_item_id ON shipment_box_items(shipment_item_id);
             """
         )
+        ensure_column(conn, "shipment_boxes", "box_length", "box_length REAL NOT NULL DEFAULT 0")
+        ensure_column(conn, "shipment_boxes", "box_width", "box_width REAL NOT NULL DEFAULT 0")
+        ensure_column(conn, "shipment_boxes", "box_height", "box_height REAL NOT NULL DEFAULT 0")
+        ensure_column(conn, "shipment_boxes", "remark", "remark TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "shipment_box_items", "shipment_item_id", "shipment_item_id INTEGER")
+        ensure_column(conn, "shipment_box_items", "qty", "qty REAL NOT NULL DEFAULT 0")
+        ensure_column(conn, "shipment_box_items", "remark", "remark TEXT NOT NULL DEFAULT ''")
+        box_cols = table_columns(conn, "shipment_boxes")
+        if "length" in box_cols:
+            conn.execute(
+                "UPDATE shipment_boxes SET box_length=COALESCE(NULLIF(box_length, 0), length), box_width=COALESCE(NULLIF(box_width, 0), width), box_height=COALESCE(NULLIF(box_height, 0), height)"
+            )
+        if "note" in box_cols:
+            conn.execute("UPDATE shipment_boxes SET remark=CASE WHEN remark='' THEN note ELSE remark END")
+        item_cols = table_columns(conn, "shipment_box_items")
+        if "quantity" in item_cols:
+            conn.execute("UPDATE shipment_box_items SET qty=CASE WHEN qty=0 THEN quantity ELSE qty END")
+        if "note" in item_cols:
+            conn.execute("UPDATE shipment_box_items SET remark=CASE WHEN remark='' THEN note ELSE remark END")
         conn.commit()
 
 
@@ -260,6 +312,145 @@ def ensure_saved_items_readonly(current_status: str, payload: dict[str, Any]) ->
         raise ValueError("单据已保存，明细只读，不允许修改商品/数量/单价")
 
 
+def ensure_shipment_editable(current_status: str) -> None:
+    if current_status == "SAVED":
+        raise ValueError("发货单已保存，箱和装箱明细只读")
+    if current_status == "VOIDED":
+        raise ValueError("已作废发货单不允许修改")
+
+
+def get_shipment_header(conn: sqlite3.Connection, shipment_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT sh.*, so.sales_no
+        FROM shipments sh
+        JOIN sales_orders so ON so.id=sh.sales_order_id
+        WHERE sh.id=?
+        """,
+        (shipment_id,),
+    ).fetchone()
+
+
+def get_shipment_totals(conn: sqlite3.Connection, shipment_id: int) -> dict[str, float]:
+    row = conn.execute(
+        """
+        SELECT
+          COALESCE(COUNT(*), 0) AS total_boxes,
+          COALESCE(SUM(gross_weight), 0) AS total_gross_weight,
+          COALESCE(SUM(volume), 0) AS total_volume
+        FROM shipment_boxes
+        WHERE shipment_id=?
+        """,
+        (shipment_id,),
+    ).fetchone()
+    qty_row = conn.execute(
+        """
+        SELECT COALESCE(SUM(qty), 0) AS total_qty
+        FROM shipment_box_items sbi
+        JOIN shipment_boxes sb ON sb.id=sbi.shipment_box_id
+        WHERE sb.shipment_id=?
+        """,
+        (shipment_id,),
+    ).fetchone()
+    return {
+        "total_boxes": float(row["total_boxes"]),
+        "total_qty": float(qty_row["total_qty"]),
+        "total_gross_weight": float(row["total_gross_weight"]),
+        "total_volume": float(row["total_volume"]),
+    }
+
+
+def get_shipment_items(conn: sqlite3.Connection, shipment_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+          si.*,
+          p.product_code,
+          p.name AS product_name,
+          COALESCE(SUM(sbi.qty), 0) AS boxed_qty
+        FROM shipment_items si
+        JOIN products p ON p.id=si.product_id
+        LEFT JOIN shipment_box_items sbi ON sbi.shipment_item_id=si.id
+        WHERE si.shipment_id=?
+        GROUP BY si.id
+        ORDER BY si.id ASC
+        """,
+        (shipment_id,),
+    ).fetchall()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["shipment_qty"] = float(item["quantity"])
+        item["boxed_qty"] = float(item["boxed_qty"])
+        item["remaining_qty"] = float(item["shipment_qty"] - item["boxed_qty"])
+        items.append(item)
+    return items
+
+
+def get_shipment_boxes(conn: sqlite3.Connection, shipment_id: int) -> list[dict[str, Any]]:
+    boxes = conn.execute(
+        """
+        SELECT *
+        FROM shipment_boxes
+        WHERE shipment_id=?
+        ORDER BY CAST(box_no AS INTEGER), id
+        """,
+        (shipment_id,),
+    ).fetchall()
+    box_data: list[dict[str, Any]] = []
+    for box in boxes:
+        items = conn.execute(
+            """
+            SELECT
+              sbi.*,
+              si.quantity AS shipment_qty,
+              si.unit,
+              p.product_code,
+              p.name AS product_name
+            FROM shipment_box_items sbi
+            JOIN shipment_items si ON si.id=sbi.shipment_item_id
+            JOIN products p ON p.id=sbi.product_id
+            WHERE sbi.shipment_box_id=?
+            ORDER BY sbi.id ASC
+            """,
+            (box["id"],),
+        ).fetchall()
+        entry = dict(box)
+        entry["items"] = [dict(item) for item in items]
+        box_data.append(entry)
+    return box_data
+
+
+def validate_shipment_box_item(
+    conn: sqlite3.Connection,
+    shipment_id: int,
+    shipment_item_id: int,
+    qty: float,
+    exclude_box_item_id: int | None = None,
+) -> sqlite3.Row:
+    shipment_item = conn.execute(
+        """
+        SELECT *
+        FROM shipment_items
+        WHERE id=? AND shipment_id=?
+        """,
+        (shipment_item_id, shipment_id),
+    ).fetchone()
+    if not shipment_item:
+        raise ValueError("发货明细不存在")
+    params: list[Any] = [shipment_item_id]
+    sql = "SELECT COALESCE(SUM(qty), 0) AS boxed_qty FROM shipment_box_items WHERE shipment_item_id=?"
+    if exclude_box_item_id is not None:
+        sql += " AND id<>?"
+        params.append(exclude_box_item_id)
+    row = conn.execute(sql, params).fetchone()
+    boxed_qty = float(row["boxed_qty"])
+    shipment_qty = float(shipment_item["quantity"])
+    if boxed_qty + qty > shipment_qty + 1e-9:
+        raise ValueError("装箱数量累计不能大于发货数量")
+    return shipment_item
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "WMV1/1.0.2"
 
@@ -267,7 +458,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         if code != 204:
@@ -360,6 +551,32 @@ class AppHandler(BaseHTTPRequestHandler):
                     rows = conn.execute(sql, args).fetchall()
                 return self.ok([dict(r) for r in rows])
 
+            if path.startswith("/api/orders/"):
+                oid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    head = conn.execute(
+                        """
+                        SELECT o.*, c.name AS customer_name
+                        FROM sales_orders o
+                        JOIN customers c ON c.id=o.customer_id
+                        WHERE o.id=?
+                        """,
+                        (oid,),
+                    ).fetchone()
+                    if not head:
+                        return self.err("销售单不存在", 404)
+                    items = conn.execute(
+                        """
+                        SELECT soi.*, p.product_code, p.name AS product_name
+                        FROM sales_order_items soi
+                        JOIN products p ON p.id=soi.product_id
+                        WHERE soi.sales_order_id=?
+                        ORDER BY soi.id ASC
+                        """,
+                        (oid,),
+                    ).fetchall()
+                return self.ok({"header": dict(head), "items": [dict(row) for row in items]})
+
             if path == "/api/shipments":
                 sql = """
                 SELECT
@@ -370,14 +587,29 @@ class AppHandler(BaseHTTPRequestHandler):
                   sh.note,
                   sh.created_at,
                   so.sales_no,
-                  COALESCE(COUNT(DISTINCT sb.id), 0) AS total_boxes,
-                  COALESCE(SUM(sbi.quantity), 0) AS total_qty,
-                  COALESCE(SUM(sb.gross_weight), 0) AS total_gross_weight,
-                  COALESCE(SUM(sb.volume), 0) AS total_volume
+                  (
+                    SELECT COALESCE(COUNT(*), 0)
+                    FROM shipment_boxes sb
+                    WHERE sb.shipment_id=sh.id
+                  ) AS total_boxes,
+                  (
+                    SELECT COALESCE(SUM(sbi.qty), 0)
+                    FROM shipment_box_items sbi
+                    JOIN shipment_boxes sb ON sb.id=sbi.shipment_box_id
+                    WHERE sb.shipment_id=sh.id
+                  ) AS total_qty,
+                  (
+                    SELECT COALESCE(SUM(sb.gross_weight), 0)
+                    FROM shipment_boxes sb
+                    WHERE sb.shipment_id=sh.id
+                  ) AS total_gross_weight,
+                  (
+                    SELECT COALESCE(SUM(sb.volume), 0)
+                    FROM shipment_boxes sb
+                    WHERE sb.shipment_id=sh.id
+                  ) AS total_volume
                 FROM shipments sh
                 JOIN sales_orders so ON so.id=sh.sales_order_id
-                LEFT JOIN shipment_boxes sb ON sb.shipment_id=sh.id
-                LEFT JOIN shipment_box_items sbi ON sbi.shipment_box_id=sb.id
                 """
                 args = []
                 cond = []
@@ -391,48 +623,34 @@ class AppHandler(BaseHTTPRequestHandler):
                     rows = conn.execute(sql, args).fetchall()
                 return self.ok([dict(r) for r in rows])
 
+            if path.startswith("/api/shipments/") and path.endswith("/summary"):
+                sid = int(path.split("/")[-2])
+                with closing(get_conn()) as conn:
+                    head = get_shipment_header(conn, sid)
+                    if not head:
+                        return self.err("发货单不存在", 404)
+                    return self.ok(
+                        {
+                            "header": dict(head),
+                            "items": get_shipment_items(conn, sid),
+                            "totals": get_shipment_totals(conn, sid),
+                        }
+                    )
+
             if path.startswith("/api/shipments/"):
                 sid = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
-                    head = conn.execute(
-                        "SELECT sh.*, so.sales_no FROM shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id WHERE sh.id=?",
-                        (sid,),
-                    ).fetchone()
+                    head = get_shipment_header(conn, sid)
                     if not head:
                         return self.err("发货单不存在", 404)
-                    boxes = conn.execute(
-                        "SELECT * FROM shipment_boxes WHERE shipment_id=? ORDER BY id ASC",
-                        (sid,),
-                    ).fetchall()
-                    box_data = []
-                    for b in boxes:
-                        items = conn.execute(
-                            """
-                            SELECT sbi.*, p.product_code, p.name AS product_name
-                            FROM shipment_box_items sbi
-                            JOIN products p ON p.id=sbi.product_id
-                            WHERE sbi.shipment_box_id=?
-                            ORDER BY sbi.id ASC
-                            """,
-                            (b["id"],),
-                        ).fetchall()
-                        d = dict(b)
-                        d["items"] = [dict(i) for i in items]
-                        box_data.append(d)
-                    totals = conn.execute(
-                        """
-                        SELECT
-                          COALESCE(COUNT(DISTINCT sb.id), 0) AS total_boxes,
-                          COALESCE(SUM(sbi.quantity), 0) AS total_qty,
-                          COALESCE(SUM(sb.gross_weight), 0) AS total_gross_weight,
-                          COALESCE(SUM(sb.volume), 0) AS total_volume
-                        FROM shipment_boxes sb
-                        LEFT JOIN shipment_box_items sbi ON sbi.shipment_box_id=sb.id
-                        WHERE sb.shipment_id=?
-                        """,
-                        (sid,),
-                    ).fetchone()
-                return self.ok({"header": dict(head), "boxes": box_data, "totals": dict(totals)})
+                    return self.ok(
+                        {
+                            "header": dict(head),
+                            "items": get_shipment_items(conn, sid),
+                            "boxes": get_shipment_boxes(conn, sid),
+                            "totals": get_shipment_totals(conn, sid),
+                        }
+                    )
 
             if path == "/api/inventory/summary":
                 sql = """
@@ -660,25 +878,59 @@ class AppHandler(BaseHTTPRequestHandler):
                         "INSERT INTO shipments(shipment_no,sales_order_id,status,note,created_at) VALUES(?,?,?,?,?)",
                         (shipment_no, sales_order_id, "DRAFT", data.get("note", ""), now),
                     )
+                    shipment_id = cur.lastrowid
+                    order_items = conn.execute(
+                        """
+                        SELECT *
+                        FROM sales_order_items
+                        WHERE sales_order_id=?
+                        ORDER BY id ASC
+                        """,
+                        (sales_order_id,),
+                    ).fetchall()
+                    for item in order_items:
+                        conn.execute(
+                            """
+                            INSERT INTO shipment_items(
+                              shipment_id,sales_order_item_id,product_id,spec_snapshot,unit,quantity,unit_price,remark,created_at
+                            ) VALUES(?,?,?,?,?,?,?,?,?)
+                            """,
+                            (
+                                shipment_id,
+                                item["id"],
+                                item["product_id"],
+                                item["spec_snapshot"],
+                                item["unit"],
+                                item["quantity"],
+                                item["unit_price"],
+                                item["line_note"],
+                                now,
+                            ),
+                        )
                     conn.commit()
-                return self.ok({"message": "发货单创建成功", "id": cur.lastrowid})
+                return self.ok({"message": "发货单创建成功", "id": shipment_id})
 
             if path.startswith("/api/shipments/") and path.endswith("/boxes"):
                 sid = int(path.split("/")[3])
                 with closing(get_conn()) as conn:
-                    existed = conn.execute("SELECT id FROM shipments WHERE id=?", (sid,)).fetchone()
-                    if not existed:
+                    shipment = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not shipment:
                         return self.err("发货单不存在", 404)
+                    ensure_shipment_editable(str(shipment["status"]))
                     box_no = must_str(data, "box_no")
                     gross = to_num(data.get("gross_weight", 0), "gross_weight", 0)
                     net = to_num(data.get("net_weight", 0), "net_weight", 0)
-                    length = to_num(data.get("length", 0), "length", 0)
-                    width = to_num(data.get("width", 0), "width", 0)
-                    height = to_num(data.get("height", 0), "height", 0)
+                    length = to_num(data.get("box_length", data.get("length", 0)), "box_length", 0)
+                    width = to_num(data.get("box_width", data.get("width", 0)), "box_width", 0)
+                    height = to_num(data.get("box_height", data.get("height", 0)), "box_height", 0)
                     volume = to_num(data.get("volume", 0), "volume", 0)
                     cur = conn.execute(
-                        "INSERT INTO shipment_boxes(shipment_id,box_no,gross_weight,net_weight,length,width,height,volume,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                        (sid, box_no, gross, net, length, width, height, volume, data.get("note", ""), now),
+                        """
+                        INSERT INTO shipment_boxes(
+                          shipment_id,box_no,box_length,box_width,box_height,gross_weight,net_weight,volume,remark,created_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (sid, box_no, length, width, height, gross, net, volume, data.get("remark", data.get("note", "")), now),
                     )
                     conn.commit()
                 return self.ok({"message": "箱信息创建成功", "id": cur.lastrowid})
@@ -688,14 +940,26 @@ class AppHandler(BaseHTTPRequestHandler):
                 sid = int(parts[3])
                 box_id = int(parts[5])
                 with closing(get_conn()) as conn:
+                    shipment = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not shipment:
+                        return self.err("发货单不存在", 404)
+                    ensure_shipment_editable(str(shipment["status"]))
                     box = conn.execute("SELECT * FROM shipment_boxes WHERE id=? AND shipment_id=?", (box_id, sid)).fetchone()
                     if not box:
                         return self.err("箱不存在", 404)
-                    qty = to_num(data.get("quantity"), "quantity", 0.0001)
-                    product_id = int(data.get("product_id"))
+                    qty = to_num(data.get("qty", data.get("quantity")), "qty", 0.0001)
+                    shipment_item_id = int(data.get("shipment_item_id"))
+                    shipment_item = validate_shipment_box_item(conn, sid, shipment_item_id, qty)
+                    product_id = int(data.get("product_id", shipment_item["product_id"]))
+                    if product_id != int(shipment_item["product_id"]):
+                        raise ValueError("箱内商品必须与发货明细商品一致")
                     cur = conn.execute(
-                        "INSERT INTO shipment_box_items(shipment_box_id,product_id,quantity,note,created_at) VALUES(?,?,?,?,?)",
-                        (box_id, product_id, qty, data.get("note", ""), now),
+                        """
+                        INSERT INTO shipment_box_items(
+                          shipment_box_id,shipment_item_id,product_id,qty,remark,created_at
+                        ) VALUES(?,?,?,?,?,?)
+                        """,
+                        (box_id, shipment_item_id, product_id, qty, data.get("remark", data.get("note", "")), now),
                     )
                     conn.commit()
                 return self.ok({"message": "箱商品创建成功", "id": cur.lastrowid})
@@ -927,6 +1191,113 @@ class AppHandler(BaseHTTPRequestHandler):
                     conn.commit()
                 return self.ok({"message": "销售单更新成功"})
 
+            if path.startswith("/api/shipments/") and "/boxes/" in path and "/items/" in path:
+                parts = path.split("/")
+                sid = int(parts[3])
+                box_id = int(parts[5])
+                item_id = int(parts[7])
+                with closing(get_conn()) as conn:
+                    shipment = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not shipment:
+                        return self.err("发货单不存在", 404)
+                    ensure_shipment_editable(str(shipment["status"]))
+                    box_item = conn.execute(
+                        """
+                        SELECT sbi.*
+                        FROM shipment_box_items sbi
+                        JOIN shipment_boxes sb ON sb.id=sbi.shipment_box_id
+                        WHERE sbi.id=? AND sbi.shipment_box_id=? AND sb.shipment_id=?
+                        """,
+                        (item_id, box_id, sid),
+                    ).fetchone()
+                    if not box_item:
+                        return self.err("箱内商品不存在", 404)
+                    shipment_item_id = int(data.get("shipment_item_id", box_item["shipment_item_id"]))
+                    qty = to_num(data.get("qty", box_item["qty"]), "qty", 0.0001)
+                    shipment_item = validate_shipment_box_item(conn, sid, shipment_item_id, qty, item_id)
+                    product_id = int(data.get("product_id", shipment_item["product_id"]))
+                    if product_id != int(shipment_item["product_id"]):
+                        raise ValueError("箱内商品必须与发货明细商品一致")
+                    conn.execute(
+                        """
+                        UPDATE shipment_box_items
+                        SET shipment_item_id=?, product_id=?, qty=?, remark=?
+                        WHERE id=?
+                        """,
+                        (
+                            shipment_item_id,
+                            product_id,
+                            qty,
+                            data.get("remark", box_item["remark"]),
+                            item_id,
+                        ),
+                    )
+                    conn.commit()
+                return self.ok({"message": "箱内商品更新成功"})
+
+            if path.startswith("/api/shipments/") and path.endswith("/boxes"):
+                return self.err("接口不存在", 404)
+
+            if path.startswith("/api/shipments/") and "/boxes/" in path:
+                parts = path.split("/")
+                sid = int(parts[3])
+                box_id = int(parts[5])
+                with closing(get_conn()) as conn:
+                    shipment = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not shipment:
+                        return self.err("发货单不存在", 404)
+                    ensure_shipment_editable(str(shipment["status"]))
+                    box = conn.execute(
+                        "SELECT * FROM shipment_boxes WHERE id=? AND shipment_id=?",
+                        (box_id, sid),
+                    ).fetchone()
+                    if not box:
+                        return self.err("箱不存在", 404)
+                    conn.execute(
+                        """
+                        UPDATE shipment_boxes
+                        SET box_no=?, box_length=?, box_width=?, box_height=?, gross_weight=?, net_weight=?, volume=?, remark=?
+                        WHERE id=?
+                        """,
+                        (
+                            must_str(data, "box_no"),
+                            to_num(data.get("box_length", box["box_length"]), "box_length", 0),
+                            to_num(data.get("box_width", box["box_width"]), "box_width", 0),
+                            to_num(data.get("box_height", box["box_height"]), "box_height", 0),
+                            to_num(data.get("gross_weight", box["gross_weight"]), "gross_weight", 0),
+                            to_num(data.get("net_weight", box["net_weight"]), "net_weight", 0),
+                            to_num(data.get("volume", box["volume"]), "volume", 0),
+                            data.get("remark", box["remark"]),
+                            box_id,
+                        ),
+                    )
+                    conn.commit()
+                return self.ok({"message": "箱信息更新成功"})
+
+            if path.startswith("/api/shipments/"):
+                sid = int(path.split("/")[-1])
+                with closing(get_conn()) as conn:
+                    current = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not current:
+                        return self.err("发货单不存在", 404)
+                    current_status = str(current["status"])
+                    if current_status == "VOIDED":
+                        raise ValueError("已作废发货单不允许修改")
+                    new_status = validate_doc_status(data.get("status", current_status))
+                    if current_status == "SAVED" and new_status == "DRAFT":
+                        raise ValueError("已保存发货单不允许改回草稿")
+                    conn.execute(
+                        "UPDATE shipments SET shipment_no=?, status=?, note=? WHERE id=?",
+                        (
+                            str(data.get("shipment_no", current["shipment_no"])).strip() or current["shipment_no"],
+                            new_status,
+                            data.get("note", current["note"]),
+                            sid,
+                        ),
+                    )
+                    conn.commit()
+                return self.ok({"message": "发货单更新成功"})
+
             return self.err("接口不存在", 404)
         except sqlite3.IntegrityError as exc:
             m = str(exc)
@@ -936,7 +1307,67 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.err("客户编码已存在", 400)
             if "suppliers.code" in m:
                 return self.err("供应商编码已存在", 400)
+            if "shipments.shipment_no" in m:
+                return self.err("发货单号已存在", 400)
+            if "shipment_boxes.shipment_id, shipment_boxes.box_no" in m:
+                return self.err("同一发货单下箱号已存在", 400)
             return self.err("数据约束错误", 400)
+        except Exception as exc:  # noqa: BLE001
+            return self.err(str(exc), 400)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        try:
+            if path.startswith("/api/shipments/") and "/boxes/" in path and "/items/" in path:
+                parts = path.split("/")
+                sid = int(parts[3])
+                box_id = int(parts[5])
+                item_id = int(parts[7])
+                with closing(get_conn()) as conn:
+                    shipment = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not shipment:
+                        return self.err("发货单不存在", 404)
+                    ensure_shipment_editable(str(shipment["status"]))
+                    deleted = conn.execute(
+                        """
+                        DELETE FROM shipment_box_items
+                        WHERE id=? AND shipment_box_id=? AND shipment_box_id IN (
+                          SELECT id FROM shipment_boxes WHERE id=? AND shipment_id=?
+                        )
+                        """,
+                        (item_id, box_id, box_id, sid),
+                    )
+                    if deleted.rowcount == 0:
+                        return self.err("箱内商品不存在", 404)
+                    conn.commit()
+                return self.ok({"message": "箱内商品删除成功"})
+
+            if path.startswith("/api/shipments/") and "/boxes/" in path:
+                parts = path.split("/")
+                sid = int(parts[3])
+                box_id = int(parts[5])
+                with closing(get_conn()) as conn:
+                    shipment = conn.execute("SELECT * FROM shipments WHERE id=?", (sid,)).fetchone()
+                    if not shipment:
+                        return self.err("发货单不存在", 404)
+                    ensure_shipment_editable(str(shipment["status"]))
+                    exists = conn.execute(
+                        "SELECT 1 FROM shipment_boxes WHERE id=? AND shipment_id=?",
+                        (box_id, sid),
+                    ).fetchone()
+                    if not exists:
+                        return self.err("箱不存在", 404)
+                    item_exists = conn.execute(
+                        "SELECT 1 FROM shipment_box_items WHERE shipment_box_id=? LIMIT 1",
+                        (box_id,),
+                    ).fetchone()
+                    if item_exists:
+                        raise ValueError("箱内已有商品，不能直接删除非空箱")
+                    conn.execute("DELETE FROM shipment_boxes WHERE id=? AND shipment_id=?", (box_id, sid))
+                    conn.commit()
+                return self.ok({"message": "箱删除成功"})
+
+            return self.err("接口不存在", 404)
         except Exception as exc:  # noqa: BLE001
             return self.err(str(exc), 400)
 

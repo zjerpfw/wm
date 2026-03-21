@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WM V1.0.2</title>
+  <title>WM V1.1</title>
   <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
   <style>
     body { margin:0; background:#f5f7fb; }
@@ -117,35 +117,121 @@ const Inventory = {
 const Shipment = {
   setup(){
     const orders = ref([]), products = ref([]), docs = ref([]), current = ref(null);
-    const createForm = reactive({ sales_order_id:null, shipment_no:'' });
-    const boxForm = reactive({ box_no:'', gross_weight:0, net_weight:0, length:0, width:0, height:0, volume:0 });
-    const itemForm = reactive({ box_id:null, product_id:null, quantity:1 });
+    const createForm = reactive({ sales_order_id:null, shipment_no:'', note:'' });
+    const boxForm = reactive({ id:null, box_no:'', box_length:0, box_width:0, box_height:0, gross_weight:0, net_weight:0, volume:0, remark:'' });
+    const itemForm = reactive({ id:null, box_id:null, shipment_item_id:null, qty:1, remark:'' });
+    const shipmentForm = reactive({ shipment_no:'', status:'DRAFT', note:'' });
+    const resetBoxForm = ()=>Object.assign(boxForm, { id:null, box_no:'', box_length:0, box_width:0, box_height:0, gross_weight:0, net_weight:0, volume:0, remark:'' });
+    const resetItemForm = ()=>Object.assign(itemForm, { id:null, box_id:null, shipment_item_id:null, qty:1, remark:'' });
+    const readonly = ()=> !current.value || current.value.header.status !== 'DRAFT';
+    const remainingQty = (shipmentItemId)=>{
+      if(!current.value) return 0;
+      const item = current.value.items.find(x=>x.id===shipmentItemId);
+      return item ? item.remaining_qty : 0;
+    };
 
     const loadRef = async()=>{
       orders.value = await request('/api/orders');
       products.value = await request('/api/products');
       docs.value = await request('/api/shipments');
     };
-    const openDoc = async(id)=>{ current.value = await request(`/api/shipments/${id}`); };
+    const openDoc = async(id)=>{
+      current.value = await request(`/api/shipments/${id}`);
+      Object.assign(shipmentForm, {
+        shipment_no: current.value.header.shipment_no,
+        status: current.value.header.status,
+        note: current.value.header.note || ''
+      });
+      resetBoxForm();
+      resetItemForm();
+    };
     const createShipment = async()=>{ try{ const d = await request('/api/shipments',{method:'POST',body:JSON.stringify(createForm)}); msgOk('发货单创建成功'); await loadRef(); await openDoc(d.id);}catch(e){msgErr(e);} };
-    const addBox = async()=>{ try{ if(!current.value) return; const d = await request(`/api/shipments/${current.value.header.id}/boxes`,{method:'POST',body:JSON.stringify(boxForm)}); msgOk('箱创建成功'); await openDoc(current.value.header.id); itemForm.box_id = d.id;}catch(e){msgErr(e);} };
-    const addItem = async()=>{ try{ if(!current.value || !itemForm.box_id) return; await request(`/api/shipments/${current.value.header.id}/boxes/${itemForm.box_id}/items`,{method:'POST',body:JSON.stringify(itemForm)}); msgOk('箱内商品已添加'); await openDoc(current.value.header.id);}catch(e){msgErr(e);} };
+    const saveShipment = async()=>{ try{ if(!current.value) return; await request(`/api/shipments/${current.value.header.id}`,{method:'PUT',body:JSON.stringify(shipmentForm)}); msgOk('发货单更新成功'); await loadRef(); await openDoc(current.value.header.id);}catch(e){msgErr(e);} };
+    const saveBox = async()=>{ try{ if(!current.value) return; if(boxForm.id){ await request(`/api/shipments/${current.value.header.id}/boxes/${boxForm.id}`,{method:'PUT',body:JSON.stringify(boxForm)}); msgOk('箱信息更新成功'); } else { const d = await request(`/api/shipments/${current.value.header.id}/boxes`,{method:'POST',body:JSON.stringify(boxForm)}); msgOk('箱创建成功'); itemForm.box_id = d.id; } resetBoxForm(); await openDoc(current.value.header.id);}catch(e){msgErr(e);} };
+    const editBox = (box)=>Object.assign(boxForm, box);
+    const deleteBox = async(boxId)=>{ try{ if(!current.value) return; await request(`/api/shipments/${current.value.header.id}/boxes/${boxId}`,{method:'DELETE'}); msgOk('箱删除成功'); await openDoc(current.value.header.id);}catch(e){msgErr(e);} };
+    const saveItem = async()=>{ try{ if(!current.value || !itemForm.box_id) return; if(itemForm.id){ await request(`/api/shipments/${current.value.header.id}/boxes/${itemForm.box_id}/items/${itemForm.id}`,{method:'PUT',body:JSON.stringify(itemForm)}); msgOk('箱内商品更新成功'); } else { await request(`/api/shipments/${current.value.header.id}/boxes/${itemForm.box_id}/items`,{method:'POST',body:JSON.stringify(itemForm)}); msgOk('箱内商品已添加'); } resetItemForm(); await openDoc(current.value.header.id);}catch(e){msgErr(e);} };
+    const editItem = (boxId, item)=>Object.assign(itemForm, { ...item, box_id: boxId });
+    const deleteItem = async(boxId, itemId)=>{ try{ if(!current.value) return; await request(`/api/shipments/${current.value.header.id}/boxes/${boxId}/items/${itemId}`,{method:'DELETE'}); msgOk('箱内商品删除成功'); await openDoc(current.value.header.id);}catch(e){msgErr(e);} };
+    const itemLabel = (shipmentItemId)=>{
+      if(!current.value) return '';
+      const item = current.value.items.find(x=>x.id===shipmentItemId);
+      return item ? `${item.product_code} / ${item.product_name}` : '';
+    };
 
     loadRef();
-    return { orders, products, docs, current, createForm, boxForm, itemForm, loadRef, openDoc, createShipment, addBox, addItem };
+    return { orders, products, docs, current, createForm, boxForm, itemForm, shipmentForm, loadRef, openDoc, createShipment, saveShipment, saveBox, editBox, deleteBox, saveItem, editItem, deleteItem, resetBoxForm, resetItemForm, readonly, remainingQty, itemLabel };
   },
   template:`<el-card><h3>发货装箱</h3>
   <el-divider content-position='left'>从销售单创建发货单</el-divider>
-  <div class='toolbar'><el-select v-model='createForm.sales_order_id' placeholder='选择销售单' style='width:220px'><el-option v-for='o in orders' :key='o.id' :label='o.sales_no' :value='o.id'/></el-select><el-input v-model='createForm.shipment_no' placeholder='发货单号(可选)' style='max-width:180px'/><el-button type='primary' @click='createShipment'>创建发货单</el-button></div>
+  <div class='toolbar'><el-select v-model='createForm.sales_order_id' placeholder='选择销售单' style='width:220px'><el-option v-for='o in orders' :key='o.id' :label='o.sales_no' :value='o.id'/></el-select><el-input v-model='createForm.shipment_no' placeholder='发货单号(可选)' style='max-width:180px'/><el-input v-model='createForm.note' placeholder='备注' style='max-width:180px'/><el-button type='primary' @click='createShipment'>创建发货单</el-button></div>
   <el-table :data='docs' border size='small'><el-table-column prop='shipment_no' label='发货单号'/><el-table-column prop='sales_no' label='销售单号'/><el-table-column prop='total_boxes' label='总箱数'/><el-table-column prop='total_qty' label='总数量'/><el-table-column prop='total_gross_weight' label='总毛重'/><el-table-column prop='total_volume' label='总体积'/><el-table-column label='操作' width='90'><template #default='s'><el-button link type='primary' @click='openDoc(s.row.id)'>打开</el-button></template></el-table-column></el-table>
 
   <div v-if='current' style='margin-top:12px'>
-    <el-descriptions border :column='5'><el-descriptions-item label='发货单'>{{current.header.shipment_no}}</el-descriptions-item><el-descriptions-item label='销售单'>{{current.header.sales_no}}</el-descriptions-item><el-descriptions-item label='总箱数'>{{current.totals.total_boxes}}</el-descriptions-item><el-descriptions-item label='总数量'>{{current.totals.total_qty}}</el-descriptions-item><el-descriptions-item label='总毛重/体积'>{{current.totals.total_gross_weight}} / {{current.totals.total_volume}}</el-descriptions-item></el-descriptions>
-    <el-divider content-position='left'>新增箱</el-divider>
-    <div class='toolbar'><el-input v-model='boxForm.box_no' placeholder='箱号 box_no' style='max-width:140px'/><el-input-number v-model='boxForm.gross_weight' :min='0' placeholder='毛重'/><el-input-number v-model='boxForm.net_weight' :min='0' placeholder='净重'/><el-input-number v-model='boxForm.length' :min='0' placeholder='长'/><el-input-number v-model='boxForm.width' :min='0' placeholder='宽'/><el-input-number v-model='boxForm.height' :min='0' placeholder='高'/><el-input-number v-model='boxForm.volume' :min='0' placeholder='体积'/><el-button @click='addBox'>新增箱</el-button></div>
-    <el-divider content-position='left'>按箱录入商品</el-divider>
-    <div class='toolbar'><el-select v-model='itemForm.box_id' placeholder='选择箱' style='width:120px'><el-option v-for='b in current.boxes' :key='b.id' :label='b.box_no' :value='b.id'/></el-select><el-select v-model='itemForm.product_id' placeholder='选择商品' style='width:180px'><el-option v-for='p in products' :key='p.id' :label='p.name' :value='p.id'/></el-select><el-input-number v-model='itemForm.quantity' :min='0.01'/><el-button type='primary' @click='addItem'>录入箱商品</el-button></div>
-    <el-table :data='current.boxes' border><el-table-column prop='box_no' label='箱号'/><el-table-column prop='gross_weight' label='毛重'/><el-table-column prop='net_weight' label='净重'/><el-table-column prop='length' label='长'/><el-table-column prop='width' label='宽'/><el-table-column prop='height' label='高'/><el-table-column prop='volume' label='体积'/><el-table-column label='箱内商品'><template #default='s'><div v-for='it in s.row.items' :key='it.id'>{{it.product_code}} / {{it.product_name}} × {{it.quantity}}</div></template></el-table-column></el-table>
+    <el-descriptions border :column='5'>
+      <el-descriptions-item label='发货单'><el-input v-model='shipmentForm.shipment_no' :disabled='readonly()'/></el-descriptions-item>
+      <el-descriptions-item label='销售单'>{{current.header.sales_no}}</el-descriptions-item>
+      <el-descriptions-item label='状态'><el-select v-model='shipmentForm.status' :disabled='current.header.status==="VOIDED"' style='width:120px'><el-option label='DRAFT' value='DRAFT'/><el-option label='SAVED' value='SAVED'/><el-option label='VOIDED' value='VOIDED'/></el-select></el-descriptions-item>
+      <el-descriptions-item label='备注'><el-input v-model='shipmentForm.note' :disabled='readonly()'/></el-descriptions-item>
+      <el-descriptions-item label='操作'><el-button type='primary' @click='saveShipment'>保存发货单</el-button></el-descriptions-item>
+    </el-descriptions>
+    <div class='toolbar' style='margin-top:8px'><el-tag>总箱数 {{current.totals.total_boxes}}</el-tag><el-tag>总数量 {{current.totals.total_qty}}</el-tag><el-tag>总毛重 {{current.totals.total_gross_weight}}</el-tag><el-tag>总体积 {{current.totals.total_volume}}</el-tag></div>
+    <el-divider content-position='left'>发货明细</el-divider>
+    <el-table :data='current.items' border>
+      <el-table-column prop='product_code' label='商品编码'/>
+      <el-table-column prop='product_name' label='商品名称'/>
+      <el-table-column prop='shipment_qty' label='发货数量'/>
+      <el-table-column prop='boxed_qty' label='已装箱数量'/>
+      <el-table-column prop='remaining_qty' label='剩余可装数量'/>
+      <el-table-column prop='unit' label='单位' width='80'/>
+    </el-table>
+    <el-divider content-position='left'>箱信息</el-divider>
+    <div class='toolbar'>
+      <el-input v-model='boxForm.box_no' placeholder='箱号 box_no' style='max-width:110px' :disabled='readonly()'/>
+      <el-input-number v-model='boxForm.box_length' :min='0' :disabled='readonly()'/>
+      <el-input-number v-model='boxForm.box_width' :min='0' :disabled='readonly()'/>
+      <el-input-number v-model='boxForm.box_height' :min='0' :disabled='readonly()'/>
+      <el-input-number v-model='boxForm.gross_weight' :min='0' :disabled='readonly()'/>
+      <el-input-number v-model='boxForm.net_weight' :min='0' :disabled='readonly()'/>
+      <el-input-number v-model='boxForm.volume' :min='0' :disabled='readonly()'/>
+      <el-input v-model='boxForm.remark' placeholder='备注' style='max-width:140px' :disabled='readonly()'/>
+      <el-button type='primary' @click='saveBox' :disabled='readonly()'>{{boxForm.id ? '更新箱' : '新增箱'}}</el-button>
+      <el-button @click='resetBoxForm'>清空</el-button>
+    </div>
+    <el-divider content-position='left'>箱内商品</el-divider>
+    <div class='toolbar'>
+      <el-select v-model='itemForm.box_id' placeholder='选择箱' style='width:110px' :disabled='readonly()'><el-option v-for='b in current.boxes' :key='b.id' :label='b.box_no' :value='b.id'/></el-select>
+      <el-select v-model='itemForm.shipment_item_id' placeholder='选择发货明细' style='width:240px' :disabled='readonly()'><el-option v-for='it in current.items' :key='it.id' :label='`${it.product_code} / ${it.product_name} / 剩余 ${it.remaining_qty}`' :value='it.id'/></el-select>
+      <el-input-number v-model='itemForm.qty' :min='0.01' :max='itemForm.shipment_item_id ? Math.max(remainingQty(itemForm.shipment_item_id), itemForm.id ? itemForm.qty : 0) : undefined' :disabled='readonly()'/>
+      <el-input v-model='itemForm.remark' placeholder='备注' style='max-width:140px' :disabled='readonly()'/>
+      <el-button type='primary' @click='saveItem' :disabled='readonly()'>{{itemForm.id ? '更新箱内商品' : '新增箱内商品'}}</el-button>
+      <el-button @click='resetItemForm'>清空</el-button>
+    </div>
+    <el-table :data='current.boxes' border>
+      <el-table-column prop='box_no' label='箱号'/>
+      <el-table-column prop='box_length' label='长'/>
+      <el-table-column prop='box_width' label='宽'/>
+      <el-table-column prop='box_height' label='高'/>
+      <el-table-column prop='gross_weight' label='毛重'/>
+      <el-table-column prop='net_weight' label='净重'/>
+      <el-table-column prop='volume' label='体积'/>
+      <el-table-column prop='remark' label='备注'/>
+      <el-table-column label='箱内商品'>
+        <template #default='s'>
+          <div v-for='it in s.row.items' :key='it.id' style='display:flex; gap:6px; align-items:center; margin:2px 0'>
+            <span>{{ itemLabel(it.shipment_item_id) }} × {{ it.qty }}</span>
+            <el-button link type='primary' @click='editItem(s.row.id, it)' :disabled='readonly()'>编辑</el-button>
+            <el-button link type='danger' @click='deleteItem(s.row.id, it.id)' :disabled='readonly()'>删除</el-button>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label='操作' width='130'>
+        <template #default='s'>
+          <el-button link type='primary' @click='editBox(s.row)' :disabled='readonly()'>编辑箱</el-button>
+          <el-button link type='danger' @click='deleteBox(s.row.id)' :disabled='readonly()'>删除箱</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
   </div>
   </el-card>`
 };
@@ -168,7 +254,7 @@ const App = {
     {path:'/inventory',label:'库存查询'},
     {path:'/shipment',label:'发货装箱'},
   ]}; },
-  template:`<div><div class='top'>WM V1.0.2</div><el-container><el-aside width='220px' style='background:#fff;border-right:1px solid #e5e7eb'><el-menu :default-active='$route.path' router><el-menu-item v-for='m in menu' :key='m.path' :index='m.path'>{{m.label}}</el-menu-item></el-menu></el-aside><el-main class='main'><router-view/></el-main></el-container></div>`
+  template:`<div><div class='top'>WM V1.1</div><el-container><el-aside width='220px' style='background:#fff;border-right:1px solid #e5e7eb'><el-menu :default-active='$route.path' router><el-menu-item v-for='m in menu' :key='m.path' :index='m.path'>{{m.label}}</el-menu-item></el-menu></el-aside><el-main class='main'><router-view/></el-main></el-container></div>`
 };
 
 createApp(App).use(router).use(ElementPlus).mount('#app');
