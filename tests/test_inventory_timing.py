@@ -81,11 +81,17 @@ class InventoryTimingIntegrationTest(unittest.TestCase):
         return int(payload['data']['id'])
 
     def create_shipment(self, sales_order_id, shipment_no='SH1'):
+        return self.create_shipment_with_items(sales_order_id, shipment_no)
+
+    def create_shipment_with_items(self, sales_order_id, shipment_no='SH1', items=None, expected_status=200):
         payload = self.request(
             '/api/shipments',
             'POST',
-            {'sales_order_id': sales_order_id, 'shipment_no': shipment_no},
+            {'sales_order_id': sales_order_id, 'shipment_no': shipment_no, 'items': items},
+            expected_status=expected_status,
         )
+        if expected_status != 200:
+            return payload
         return int(payload['data']['id'])
 
     def inventory_summary(self):
@@ -102,6 +108,13 @@ class InventoryTimingIntegrationTest(unittest.TestCase):
     def movement_by_ref_type(self, ref_type):
         payload = self.request('/api/inventory/movements')
         return [row for row in payload['data'] if row['ref_type'] == ref_type]
+
+    def order_items(self, order_id):
+        payload = self.request(f'/api/orders/{order_id}')
+        return payload['data']['items']
+
+    def set_shipment_limit(self, enabled):
+        self.request('/api/settings/shipment-limit', 'PUT', {'enabled': enabled})
 
     def test_inventory_moves_only_on_shipment_status_transitions(self):
         self.assertEqual(self.inventory_on_hand(), 10.0)
@@ -213,6 +226,71 @@ class InventoryTimingIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(self.inventory_on_hand(), 10.0)
         self.assertEqual(self.movement_by_ref_type('VOID_SHIPMENT'), [])
+
+    def test_sales_order_can_split_shipments_and_enforce_cumulative_limit(self):
+        order_id = self.create_sales_order('SO-SPLIT', 10)
+        order_items = self.order_items(order_id)
+        self.assertEqual(order_items[0]['remaining_to_ship'], 10.0)
+
+        shipment1_id = self.create_shipment_with_items(
+            order_id,
+            'SH-SPLIT-1',
+            [{'sales_order_item_id': order_items[0]['id'], 'quantity': 6}],
+        )
+        self.assertIsInstance(shipment1_id, int)
+        order_items = self.order_items(order_id)
+        self.assertEqual(order_items[0]['shipped_qty'], 6.0)
+        self.assertEqual(order_items[0]['remaining_to_ship'], 4.0)
+
+        shipment2_id = self.create_shipment_with_items(
+            order_id,
+            'SH-SPLIT-2',
+            [{'sales_order_item_id': order_items[0]['id'], 'quantity': 4}],
+        )
+        self.assertIsInstance(shipment2_id, int)
+        order_items = self.order_items(order_id)
+        self.assertEqual(order_items[0]['shipped_qty'], 10.0)
+        self.assertEqual(order_items[0]['remaining_to_ship'], 0.0)
+
+        overflow = self.create_shipment_with_items(
+            order_id,
+            'SH-SPLIT-3',
+            [{'sales_order_item_id': order_items[0]['id'], 'quantity': 1}],
+            expected_status=400,
+        )
+        self.assertIn('累计发货数量不能大于销售数量', overflow['error'])
+
+        self.request(
+            f'/api/shipments/{shipment1_id}',
+            'PUT',
+            {'shipment_no': 'SH-SPLIT-1', 'status': 'VOIDED'},
+        )
+        order_items = self.order_items(order_id)
+        self.assertEqual(order_items[0]['shipped_qty'], 4.0)
+        self.assertEqual(order_items[0]['remaining_to_ship'], 6.0)
+
+    def test_shipment_limit_toggle_allows_over_shipment_when_disabled(self):
+        self.set_shipment_limit(False)
+        order_id = self.create_sales_order('SO-LIMIT-OFF', 5)
+        order_items = self.order_items(order_id)
+
+        shipment1_id = self.create_shipment_with_items(
+            order_id,
+            'SH-LIMIT-OFF-1',
+            [{'sales_order_item_id': order_items[0]['id'], 'quantity': 5}],
+        )
+        self.assertIsInstance(shipment1_id, int)
+
+        shipment2_id = self.create_shipment_with_items(
+            order_id,
+            'SH-LIMIT-OFF-2',
+            [{'sales_order_item_id': order_items[0]['id'], 'quantity': 2}],
+        )
+        self.assertIsInstance(shipment2_id, int)
+
+        order_items = self.order_items(order_id)
+        self.assertEqual(order_items[0]['shipped_qty'], 7.0)
+        self.assertEqual(order_items[0]['remaining_to_ship'], 0.0)
 
 
 if __name__ == '__main__':

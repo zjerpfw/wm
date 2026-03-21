@@ -26,6 +26,8 @@ wm 外贸订单与库存系统，当前为 **Web SPA + Python + SQLite 真数据
 - `shipment_boxes`：箱信息，同一 `shipment_id` 下 `box_no` 唯一。
 - `shipment_box_items`：箱内商品明细。
 - 支持一个发货单多个箱、一个箱多个商品、同一商品拆分到多个箱。
+- 同一销售单支持拆分生成多个发货单，并返回每个销售明细的 `remaining_to_ship` 剩余可发数量。
+- 支持“累计发货数量控制”开关：开启时，历史未作废发货单 + 当前新发货单数量不能大于销售数量；关闭时允许超量发货。
 - 后端校验同一发货明细的累计装箱数量不能大于发货数量。
 - 发货单 `DRAFT` 可编辑，`SAVED` 只读，`VOIDED` 不可编辑。
 - 建箱 / 改箱本身不直接写库存流水。
@@ -70,6 +72,8 @@ python3 -m unittest discover -s tests -v
 - 重复 `SAVED` / 重复 `VOIDED` 不重复记账。
 - `DRAFT -> VOIDED` 不回冲未发生库存。
 - `inventory_movements` 中 `SHIPMENT / VOID_SHIPMENT` 的 `ref_type / ref_id / ref_no` 追溯正确。
+- 同一销售单可拆成多张发货单，且在开启控制参数时累计发货数量不允许超量。
+- 发货单作废后会释放销售单的 `remaining_to_ship`。
 
 ## API 概览
 
@@ -86,6 +90,9 @@ python3 -m unittest discover -s tests -v
   - `GET/POST /api/orders`
   - `GET /api/orders/{id}`
   - `PUT /api/orders/{id}`
+- 参数设置
+  - `GET /api/settings/shipment-limit`
+  - `PUT /api/settings/shipment-limit`
 - 发货装箱
   - `GET/POST /api/shipments`
   - `GET /api/shipments/{id}`

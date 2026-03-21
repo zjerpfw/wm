@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
@@ -18,6 +19,9 @@ def now_iso() -> str:
 
 
 def resolve_db_path() -> Path:
+    env_path = os.environ.get("WM_DB_PATH", "").strip()
+    if env_path:
+        return Path(env_path).expanduser().resolve()
     src_candidate = Path(__file__).resolve().parents[2] / "backend" / "wm.db"
     if src_candidate.parent.exists():
         return src_candidate
@@ -260,6 +264,12 @@ def init_db() -> None:
                 FOREIGN KEY (product_id) REFERENCES products(id)
             );
 
+            CREATE TABLE IF NOT EXISTS system_settings (
+                setting_key TEXT PRIMARY KEY,
+                setting_value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_shipment_items_shipment_id ON shipment_items(shipment_id);
             CREATE INDEX IF NOT EXISTS idx_shipment_boxes_shipment_id ON shipment_boxes(shipment_id);
             CREATE INDEX IF NOT EXISTS idx_shipment_box_items_box_id ON shipment_box_items(shipment_box_id);
@@ -285,6 +295,13 @@ def init_db() -> None:
             conn.execute("UPDATE shipment_box_items SET qty=CASE WHEN qty=0 THEN quantity ELSE qty END")
         if "note" in item_cols:
             conn.execute("UPDATE shipment_box_items SET remark=CASE WHEN remark='' THEN note ELSE remark END")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO system_settings(setting_key, setting_value, updated_at)
+            VALUES('enforce_sales_shipment_limit', '1', ?)
+            """,
+            (now_iso(),),
+        )
         conn.commit()
 
 
@@ -419,6 +436,136 @@ def get_shipment_boxes(conn: sqlite3.Connection, shipment_id: int) -> list[dict[
         entry["items"] = [dict(item) for item in items]
         box_data.append(entry)
     return box_data
+
+
+def setting_enabled(conn: sqlite3.Connection, setting_key: str, default: bool = True) -> bool:
+    row = conn.execute(
+        "SELECT setting_value FROM system_settings WHERE setting_key=?",
+        (setting_key,),
+    ).fetchone()
+    if not row:
+        return default
+    return str(row["setting_value"]).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def set_setting(conn: sqlite3.Connection, setting_key: str, enabled: bool) -> None:
+    now = now_iso()
+    conn.execute(
+        """
+        INSERT INTO system_settings(setting_key, setting_value, updated_at)
+        VALUES(?,?,?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+          setting_value=excluded.setting_value,
+          updated_at=excluded.updated_at
+        """,
+        (setting_key, "1" if enabled else "0", now),
+    )
+
+
+def get_sales_order_shipping_statuses(
+    conn: sqlite3.Connection,
+    sales_order_id: int,
+    exclude_shipment_id: int | None = None,
+) -> list[dict[str, Any]]:
+    params: list[Any] = [sales_order_id]
+    shipment_filter = ""
+    if exclude_shipment_id is not None:
+        shipment_filter = " AND sh.id<>?"
+        params.append(exclude_shipment_id)
+    params.append(sales_order_id)
+    rows = conn.execute(
+        f"""
+        SELECT
+          soi.*,
+          p.product_code,
+          p.name AS product_name,
+          COALESCE(shipped.shipped_qty, 0) AS shipped_qty
+        FROM sales_order_items soi
+        JOIN products p ON p.id=soi.product_id
+        LEFT JOIN (
+          SELECT
+            si.sales_order_item_id,
+            SUM(si.quantity) AS shipped_qty
+          FROM shipment_items si
+          JOIN shipments sh ON sh.id=si.shipment_id
+          WHERE sh.sales_order_id=? AND sh.status<>'VOIDED'{shipment_filter}
+          GROUP BY si.sales_order_item_id
+        ) shipped ON shipped.sales_order_item_id=soi.id
+        WHERE soi.sales_order_id=?
+        ORDER BY soi.id ASC
+        """,
+        params,
+    ).fetchall()
+    data: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["quantity"] = float(item["quantity"])
+        item["unit_price"] = float(item["unit_price"])
+        item["shipped_qty"] = float(item["shipped_qty"])
+        item["remaining_to_ship"] = max(float(item["quantity"] - item["shipped_qty"]), 0.0)
+        data.append(item)
+    return data
+
+
+def build_shipment_create_items(
+    conn: sqlite3.Connection,
+    sales_order_id: int,
+    raw_items: Any,
+) -> list[dict[str, Any]]:
+    enforce_limit = setting_enabled(conn, "enforce_sales_shipment_limit", True)
+    shipping_statuses = get_sales_order_shipping_statuses(conn, sales_order_id)
+    item_map = {int(item["id"]): item for item in shipping_statuses}
+    if not item_map:
+        raise ValueError("销售单明细不存在")
+
+    requested_items: list[dict[str, Any]] = []
+    if raw_items is None:
+        requested_items = [
+            {"sales_order_item_id": int(item["id"]), "quantity": float(item["remaining_to_ship"])}
+            for item in shipping_statuses
+            if float(item["remaining_to_ship"]) > 1e-9
+        ]
+    else:
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValueError("发货单 items 不能为空")
+        seen_ids: set[int] = set()
+        for raw in raw_items:
+            sales_order_item_id = int(raw.get("sales_order_item_id"))
+            if sales_order_item_id in seen_ids:
+                raise ValueError("发货单 items 中销售单明细不能重复")
+            seen_ids.add(sales_order_item_id)
+            sales_item = item_map.get(sales_order_item_id)
+            if not sales_item:
+                raise ValueError("发货单 items 中存在无效销售单明细")
+            qty = to_num(raw.get("quantity"), "quantity", 0)
+            if qty <= 1e-9:
+                continue
+            requested_items.append({"sales_order_item_id": sales_order_item_id, "quantity": qty})
+
+    if not requested_items:
+        if raw_items is not None:
+            raise ValueError("发货单必须至少包含一个数量大于 0 的商品")
+        raise ValueError("当前销售单已无可发数量")
+
+    shipment_items: list[dict[str, Any]] = []
+    for requested in requested_items:
+        sales_item = item_map[requested["sales_order_item_id"]]
+        qty = float(requested["quantity"])
+        remaining_to_ship = float(sales_item["remaining_to_ship"])
+        if enforce_limit and qty > remaining_to_ship + 1e-9:
+            raise ValueError(f"商品 {sales_item['product_code']} 累计发货数量不能大于销售数量")
+        shipment_items.append(
+            {
+                "sales_order_item_id": int(sales_item["id"]),
+                "product_id": int(sales_item["product_id"]),
+                "spec_snapshot": sales_item["spec_snapshot"],
+                "unit": sales_item["unit"],
+                "quantity": qty,
+                "unit_price": float(sales_item["unit_price"]),
+                "remark": sales_item["line_note"],
+            }
+        )
+    return shipment_items
 
 
 def validate_shipment_box_item(
@@ -648,6 +795,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     rows = conn.execute(sql, args).fetchall()
                 return self.ok([dict(r) for r in rows])
 
+            if path == "/api/settings/shipment-limit":
+                with closing(get_conn()) as conn:
+                    return self.ok(
+                        {
+                            "enabled": setting_enabled(conn, "enforce_sales_shipment_limit", True),
+                        }
+                    )
+
             if path.startswith("/api/orders/"):
                 oid = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
@@ -663,16 +818,13 @@ class AppHandler(BaseHTTPRequestHandler):
                     if not head:
                         return self.err("销售单不存在", 404)
                     items = conn.execute(
-                        """
-                        SELECT soi.*, p.product_code, p.name AS product_name
-                        FROM sales_order_items soi
-                        JOIN products p ON p.id=soi.product_id
-                        WHERE soi.sales_order_id=?
-                        ORDER BY soi.id ASC
-                        """,
+                        "SELECT COUNT(*) AS cnt FROM sales_order_items WHERE sales_order_id=?",
                         (oid,),
-                    ).fetchall()
-                return self.ok({"header": dict(head), "items": [dict(row) for row in items]})
+                    ).fetchone()
+                    if int(items["cnt"]) == 0:
+                        return self.ok({"header": dict(head), "items": []})
+                    item_rows = get_sales_order_shipping_statuses(conn, oid)
+                return self.ok({"header": dict(head), "items": item_rows})
 
             if path == "/api/shipments":
                 sql = """
@@ -966,22 +1118,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     so = conn.execute("SELECT * FROM sales_orders WHERE id=?", (sales_order_id,)).fetchone()
                     if not so:
                         return self.err("销售单不存在", 404)
+                    shipment_items = build_shipment_create_items(conn, sales_order_id, data.get("items"))
                     shipment_no = str(data.get("shipment_no", "")).strip() or f"SH-{so['sales_no']}"
                     cur = conn.execute(
                         "INSERT INTO shipments(shipment_no,sales_order_id,status,note,created_at) VALUES(?,?,?,?,?)",
                         (shipment_no, sales_order_id, "DRAFT", data.get("note", ""), now),
                     )
                     shipment_id = cur.lastrowid
-                    order_items = conn.execute(
-                        """
-                        SELECT *
-                        FROM sales_order_items
-                        WHERE sales_order_id=?
-                        ORDER BY id ASC
-                        """,
-                        (sales_order_id,),
-                    ).fetchall()
-                    for item in order_items:
+                    for item in shipment_items:
                         conn.execute(
                             """
                             INSERT INTO shipment_items(
@@ -990,13 +1134,13 @@ class AppHandler(BaseHTTPRequestHandler):
                             """,
                             (
                                 shipment_id,
-                                item["id"],
+                                item["sales_order_item_id"],
                                 item["product_id"],
                                 item["spec_snapshot"],
                                 item["unit"],
                                 item["quantity"],
                                 item["unit_price"],
-                                item["line_note"],
+                                item["remark"],
                                 now,
                             ),
                         )
@@ -1104,6 +1248,13 @@ class AppHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             data = parse_json_body(self)
+            if path == "/api/settings/shipment-limit":
+                enabled = bool(data.get("enabled", True))
+                with closing(get_conn()) as conn:
+                    set_setting(conn, "enforce_sales_shipment_limit", enabled)
+                    conn.commit()
+                return self.ok({"message": "累计发货数量控制更新成功", "enabled": enabled})
+
             if path.startswith("/api/products/"):
                 pid = int(path.split("/")[-1])
                 with closing(get_conn()) as conn:
